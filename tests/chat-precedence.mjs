@@ -66,10 +66,10 @@ test('role defaults, chat exceptions and manual mode share one preset switch', a
     await open('ordinary', 'Other API selection');
 });
 
-test('the binding panel follows the preset order, including disabled prompts', () => {
+test('the binding panel follows the preset order and its enabled flags', () => {
     const preset = {
         prompts: [
-            { identifier: 'interrupt' },
+            { identifier: 'interrupt', enabled: false },
             { identifier: 'unused' },
             { identifier: 'do-not-interrupt' },
         ],
@@ -80,8 +80,8 @@ test('the binding panel follows the preset order, including disabled prompts', (
         ] }],
     };
     const manager = { apiId: 'openai', getCompletionPresetByName: () => preset };
-    assert.deepEqual(listPresetPrompts(manager, 'Story').map(prompt => prompt.identifier), [
-        'do-not-interrupt',
-        'interrupt',
+    assert.deepEqual(listPresetPrompts(manager, 'Story').map(({ identifier, enabled }) => [identifier, enabled]), [
+        ['do-not-interrupt', false],
+        ['interrupt', true],
     ]);
 });
