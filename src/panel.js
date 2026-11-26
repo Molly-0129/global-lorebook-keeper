@@ -1422,6 +1422,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
     setOnStateChangedCallback(() => {
         if (backdrop.isConnected && (!isAnyDirty() || draftChat?.key !== currentChat()?.key)) {
+            if (!isChatDirty()) loadChatDraft();
             renderAll();
         } else if (backdrop.isConnected) {
             renderStatusBar(getLiveEnvData());
