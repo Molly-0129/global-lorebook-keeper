@@ -44,12 +44,6 @@ const chatPresetModeLabels = {
     manual: '跟随全局预设',
 };
 
-const chatPromptOptions = [
-    ['off', '关闭'],
-    ['', '跟随预设'],
-    ['on', '开启'],
-];
-
 function getChatPresetSelection(binding, env) {
     const apiId = env.pm?.apiId;
     const boundRolePreset = resolvePreset({ mode: 'inherit' }, apiId, env.settings);
@@ -384,7 +378,8 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const statusPreset = savedPresetUnavailable ? savedPreset || '预设' : savedPreset || env.currentPreset;
         const promptsAdjusted = savedPreset && !savedPresetUnavailable && savedPreset === env.currentPreset
             && savedChatBinding.preset === savedPreset && savedChatBinding.apiId === apiId
-            && listPresetPrompts(env.pm, savedPreset).some(prompt => Object.hasOwn(savedChatBinding.prompts, prompt.identifier));
+            && listPresetPrompts(env.pm, savedPreset).some(({ identifier, enabled }) =>
+                Object.hasOwn(savedChatBinding.prompts, identifier) && savedChatBinding.prompts[identifier] !== enabled);
         const savedStatus = savedMode ? renderBindingStatus({
             label: `已保存 · ${savedSource}`,
             preset: statusPreset,
@@ -421,17 +416,14 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         <div class="lk-chat-prompt-list" data-preset="${esc(targetPreset)}">
                             ${prompts.map((prompt, index) => {
                                 const name = esc(prompt.name || prompt.identifier);
-                                const current = Object.hasOwn(scoped, prompt.identifier) ? (scoped[prompt.identifier] ? 'on' : 'off') : '';
+                                 const enabled = Object.hasOwn(scoped, prompt.identifier) ? scoped[prompt.identifier] : prompt.enabled;
                                 return `
                                     <div class="lk-chat-prompt-row">
                                         <span class="lk-chat-prompt-name" id="lk-chat-prompt-name-${index}" title="${name}">${name}</span>
-                                        <div class="lk-chat-prompt-options" role="radiogroup" aria-labelledby="lk-chat-prompt-name-${index}">
-                                            ${chatPromptOptions.map(([value, label]) => `
-                                                <label>
-                                                    <input type="radio" name="lk-chat-prompt-${index}" value="${value}" data-chat-prompt="${esc(prompt.identifier)}" ${current === value ? 'checked' : ''} />
-                                                    <span>${label}</span>
-                                                </label>`).join('')}
-                                        </div>
+                                        <button type="button" class="lk-chat-prompt-toggle" role="switch" aria-labelledby="lk-chat-prompt-name-${index}"
+                                            aria-checked="${enabled}" data-action="toggle-chat-prompt" data-chat-prompt="${esc(prompt.identifier)}">
+                                            <i class="prompt-manager-toggle-action fa-solid ${enabled ? 'fa-toggle-on' : 'fa-toggle-off'}" aria-hidden="true"></i>
+                                        </button>
                                     </div>`;
                             }).join('')}
                         </div>
@@ -451,12 +443,12 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const env = getLiveEnvData();
         const { pm } = env;
         const { mode, targetPreset: target } = getChatPresetSelection(draft, env);
-        const ids = new Set(listPresetPrompts(pm, target).map(prompt => prompt.identifier));
+        const defaultFlags = new Map(listPresetPrompts(pm, target).map(({ identifier, enabled }) => [identifier, enabled]));
         return {
             ...draft,
             mode,
             prompts: draft.preset === target && draft.apiId === pm?.apiId
-                ? Object.fromEntries(Object.entries(draft.prompts).filter(([id]) => ids.has(id))) : {},
+                ? Object.fromEntries(Object.entries(draft.prompts).filter(([id, enabled]) => defaultFlags.has(id) && enabled !== defaultFlags.get(id))) : {},
         };
     };
 
@@ -1376,6 +1368,35 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 }
                 break;
             }
+            case 'toggle-chat-prompt': {
+                const env = getLiveEnvData();
+                const apiId = env.pm?.apiId;
+                const { targetPreset } = getChatPresetSelection(draft, env);
+                const identifier = actionEl.dataset.chatPrompt;
+                const prompt = listPresetPrompts(env.pm, targetPreset).find(entry => entry.identifier === identifier);
+                if (!prompt) return;
+
+                const enabled = actionEl.getAttribute('aria-checked') !== 'true';
+                if (draft.apiId !== apiId || draft.preset !== targetPreset) draft.prompts = {};
+                if (enabled === prompt.enabled) delete draft.prompts[identifier];
+                else draft.prompts = { ...draft.prompts, [identifier]: enabled };
+
+                const hasPromptOverrides = Object.keys(draft.prompts).length > 0;
+                const hasPresetScope = draft.mode === 'preset' || hasPromptOverrides;
+                draft.apiId = hasPresetScope ? apiId : '';
+                draft.preset = hasPresetScope ? targetPreset : '';
+
+                actionEl.setAttribute('aria-checked', String(enabled));
+                const icon = actionEl.querySelector('i');
+                icon.classList.toggle('fa-toggle-on', enabled);
+                icon.classList.toggle('fa-toggle-off', !enabled);
+
+                const disabled = !savedChatBinding.mode && !isChatDirty();
+                for (const button of backdrop.querySelectorAll('[data-action="save-chat-binding"], [data-action="clear-chat-binding"]')) {
+                    button.disabled = disabled;
+                }
+                break;
+            }
             case 'save-chat-binding':
                 await saveChatDraft(getDraftToSave());
                 break;
@@ -1539,25 +1560,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             draft.prompts = {};
             chatPromptsOpen = false;
             renderAll();
-            return;
-        }
-        if (t.type === 'radio' && t.checked && t.hasAttribute('data-chat-prompt')) {
-            const env = getLiveEnvData();
-            const apiId = env.pm?.apiId;
-            const { targetPreset: target } = getChatPresetSelection(draft, env);
-            if (draft.apiId !== apiId || draft.preset !== target) draft.prompts = {};
-            draft.apiId = apiId;
-            draft.preset = target;
-            if (t.value) draft.prompts = { ...draft.prompts, [t.dataset.chatPrompt]: t.value === 'on' };
-            else delete draft.prompts[t.dataset.chatPrompt];
-            if (!draft.mode && !Object.keys(draft.prompts).length) {
-                draft.preset = '';
-                draft.apiId = '';
-            }
-            const disabled = !savedChatBinding.mode && !isChatDirty();
-            for (const button of backdrop.querySelectorAll('[data-action="save-chat-binding"], [data-action="clear-chat-binding"]')) {
-                button.disabled = disabled;
-            }
             return;
         }
         if (t.classList.contains('lk-opt-checkbox') && t.dataset.opt) {
