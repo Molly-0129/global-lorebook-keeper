@@ -38,6 +38,82 @@ import {
 
 let activeModal = null;
 
+const chatPresetModeLabels = {
+    inherit: '跟随角色绑定',
+    preset: '选择指定预设',
+    manual: '跟随全局预设',
+};
+
+const chatPromptOptions = [
+    ['off', '关闭'],
+    ['', '跟随预设'],
+    ['on', '开启'],
+];
+
+function getChatPresetSelection(binding, env) {
+    const apiId = env.pm?.apiId;
+    const boundRolePreset = resolvePreset({ mode: 'inherit' }, apiId, env.settings);
+    const rolePreset = env.allPresets.includes(boundRolePreset) ? boundRolePreset : '';
+    const mode = binding.mode || (rolePreset ? 'inherit' : 'manual');
+    const targetPreset = mode === 'inherit' ? rolePreset : resolvePreset({ ...binding, mode }, apiId, env.settings);
+    return { mode, rolePreset, targetPreset };
+}
+
+function renderBookGrid(env, selectedBooks, search) {
+    const worldSet = new Set(env.allLorebooks);
+    const activeWorldSet = new Set(env.activeLorebooks);
+    const selectedSet = new Set(selectedBooks);
+    const keyword = search.trim().toLowerCase();
+    const orderedBooks = [...selectedBooks.filter(book => !worldSet.has(book)), ...env.allLorebooks];
+    const filteredBooks = orderedBooks.filter(book => book.toLowerCase().includes(keyword));
+    if (!orderedBooks.length) return '<div class="lk-empty-inline">当前酒馆中还没有任何世界书。</div>';
+    if (!filteredBooks.length) return `<div class="lk-empty-inline">没有匹配「${esc(search)}」的世界书</div>`;
+    return filteredBooks.map(book => {
+        const checked = selectedSet.has(book);
+        const exists = worldSet.has(book);
+        return `
+            <label class="checkbox_label lk-book-item ${checked ? 'is-checked' : ''} ${exists ? '' : 'is-missing'}" title="${esc(book)}">
+                <input type="checkbox" class="lk-book-checkbox" value="${esc(book)}" ${checked ? 'checked' : ''} />
+                <span class="lk-book-name">${esc(book)}</span>
+                ${!exists ? '<span class="lk-mini-tag is-warn">未找到</span>' : activeWorldSet.has(book) ? '<span class="lk-mini-tag is-live" title="当前全局已启用">启用中</span>' : ''}
+            </label>`;
+    }).join('');
+}
+
+function renderBookPicker(env, selectedBooks, search, label, step = '') {
+    const worldSet = new Set(env.allLorebooks);
+    return `
+        <div class="lk-step">
+            <div class="lk-step-head">
+                <div class="lk-step-label">
+                    ${step ? `<span class="lk-step-num">${step}</span>` : ''}${label}
+                    <span class="lk-count-pill ${selectedBooks.length ? 'has-val' : ''}">已选 ${selectedBooks.length} 本</span>
+                </div>
+                <div class="lk-step-tools">
+                    ${env.activeLorebooks.length ? `<button type="button" class="lk-link-btn" data-action="fill-active-books">填入当前已开 (${env.activeLorebooks.length})</button>` : ''}
+                    ${selectedBooks.length ? '<button type="button" class="lk-link-btn is-muted" data-action="clear-selected-books">清空已选</button>' : ''}
+                </div>
+            </div>
+            <div class="lk-search-box">
+                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                <input type="search" id="lk-book-search" class="text_pole lk-search-input" aria-label="搜索世界书名称" placeholder="搜索世界书名称..." value="${esc(search)}" />
+                <button type="button" class="lk-search-clear" data-action="clear-book-search" title="清除搜索" aria-label="清除搜索" ${search ? '' : 'hidden'}>&times;</button>
+            </div>
+            ${selectedBooks.length ? `
+                <div class="lk-selected-summary">
+                    <div class="lk-chip-wrap">
+                        ${selectedBooks.map(book => `
+                            <span class="lk-chip ${worldSet.has(book) ? '' : 'is-missing'}">
+                                <i class="fa-solid fa-book-atlas"></i>
+                                <span>${esc(book)}${worldSet.has(book) ? '' : ' (未找到)'}</span>
+                                <button type="button" class="lk-chip-remove" data-action="remove-book-chip" data-book="${esc(book)}" title="取消勾选">&times;</button>
+                            </span>`).join('')}
+                    </div>
+                </div>` : ''}
+            <div class="lk-book-grid" id="lk-book-grid">${renderBookGrid(env, selectedBooks, search)}</div>
+        </div>`;
+}
+
 function serializePlSnapshot({ name = '', color = '', presets = [], lorebooks = [] }) {
     return JSON.stringify({
         name: String(name || '').trim(),
@@ -124,11 +200,19 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
     let draftChat = null;
     let draft = {};
     let savedDraft = '';
+    let savedChatBinding = {};
+    let chatBookSearch = '';
+    let chatPromptsOpen = false;
     let savingChat = false;
 
     const loadChatDraft = (chat = currentChat()) => {
+        if (draftChat?.key !== chat?.key) {
+            chatBookSearch = '';
+            chatPromptsOpen = false;
+        }
         draftChat = chat;
-        draft = { mode: 'inherit', preset: '', apiId: '', prompts: {}, lorebooks: [], ...readChatBinding(chat) };
+        savedChatBinding = chat ? readChatBinding(chat) : {};
+        draft = { mode: '', preset: '', apiId: '', lorebooks: [], ...savedChatBinding, prompts: { ...savedChatBinding.prompts } };
         savedDraft = JSON.stringify(draft);
     };
     loadChatDraft();
@@ -138,17 +222,21 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
     const saveChatDraft = async (binding = draft) => {
         if (savingChat || !draftChat) return false;
-        if (binding.mode === 'preset' && !binding.preset) {
-            toastr.warning('请先选择聊天预设');
+        const chat = draftChat;
+        const env = getLiveEnvData();
+        if (binding.mode === 'preset' && (binding.apiId !== env.pm?.apiId || !env.allPresets.includes(binding.preset))) {
+            toastr.warning('请选择当前 API 可用的聊天预设。');
             return false;
         }
         savingChat = true;
         try {
-            await saveChatBinding(draftChat, binding);
+            await saveChatBinding(chat, binding);
+            const saved = Boolean(readChatBinding(chat).mode);
             loadChatDraft();
             await applyCurrentChatBinding();
             renderAll();
-            toastr.success(binding.mode || binding.preset || binding.lorebooks?.length ? '已保存聊天绑定' : '已解除聊天绑定');
+            const message = saved ? '已保存聊天绑定' : binding.mode ? '已恢复默认预设来源' : '已解除聊天绑定';
+            toastr.success(message);
             return true;
         } catch (error) {
             toastr.error(error.message || '保存聊天绑定失败');
@@ -176,8 +264,12 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 <option value="">选择预设</option>
                 ${env.allPresets.map(p => `<option value="${esc(p)}" ${p === name && (!role?.apiId || role.apiId === env.pm.apiId) ? 'selected' : ''}>${esc(p)}</option>`).join('')}
             </select>
-            <button type="button" class="menu_button" data-action="save-role">保存角色绑定</button>
-            <button type="button" class="menu_button" data-action="clear-role" ${role ? '' : 'disabled'}>解除角色绑定</button>
+            <div class="lk-composer-footer">
+                <div class="lk-composer-btns">
+                    <button type="button" class="menu_button lk-btn lk-btn-secondary" data-action="clear-role" ${role ? '' : 'disabled'}>解除角色绑定</button>
+                    <button type="button" class="menu_button lk-btn lk-btn-primary" data-action="save-role">保存角色绑定</button>
+                </div>
+            </div>
         </div>`;
     };
 
@@ -185,57 +277,82 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const chat = currentChat();
         if (!chat) return '<p class="lk-empty-inline">请先打开一条聊天。</p>';
         const apiId = env.pm?.apiId;
-        const missingPreset = draft.mode === 'preset' && draft.preset && (!env.allPresets.includes(draft.preset) || draft.apiId !== apiId);
+        const { mode, rolePreset, targetPreset } = getChatPresetSelection(draft, env);
+        const missingPreset = mode === 'preset' && draft.preset && (!env.allPresets.includes(draft.preset) || draft.apiId !== apiId);
         const presetOptions = [...(missingPreset ? [draft.preset] : []), ...env.allPresets.filter(preset => !missingPreset || preset !== draft.preset)];
-        const targetPreset = resolvePreset(draft, apiId, env.settings);
         const prompts = listPresetPrompts(env.pm, targetPreset);
         const scoped = draft.preset === targetPreset && draft.apiId === apiId ? draft.prompts : {};
         const missingPrompts = !missingPreset && Object.keys(scoped).filter(id => !prompts.some(prompt => prompt.identifier === id));
-        const allBooks = uniqueStrings([...draft.lorebooks, ...env.allLorebooks]);
+        const savedMode = savedChatBinding.mode;
+        const hasBindingChanges = Boolean(savedMode) || isChatDirty();
+        const savedPreset = savedMode === 'preset' ? savedChatBinding.preset : savedMode === 'inherit' ? rolePreset : '';
+        const savedPresetUnavailable = savedMode === 'preset' && (savedChatBinding.apiId !== apiId || !env.allPresets.includes(savedPreset));
+        const savedSource = savedMode === 'preset' ? '指定预设' : chatPresetModeLabels[savedMode];
+        const savedSummary = savedMode ? [
+            '已保存', savedSource,
+            savedPresetUnavailable ? `${savedPreset || '预设'}（不可用）` : savedPreset,
+            savedMode === 'inherit' && !rolePreset ? '当前跟随全局预设' : '',
+            `额外世界书 ${savedChatBinding.lorebooks.length} 本`,
+        ].filter(Boolean).join(' · ') : '未设置聊天绑定';
         return `
             <div class="lk-settings-card">
-                <h3>当前聊天 <span>${esc(chat.name)}</span></h3>
-                <label for="lk-chat-mode">预设来源</label>
+                <h3 class="lk-chat-heading">
+                    <span>当前聊天</span>
+                    <span class="lk-chat-heading-name" title="${esc(chat.name)}">${esc(chat.name)}</span>
+                    <span class="lk-count-pill lk-chat-binding-status ${savedMode ? 'has-val' : ''}" title="${esc(savedSummary)}">${esc(savedSummary)}</span>
+                </h3>
+                <label class="lk-step-label" for="lk-chat-mode">预设来源</label>
                 <select class="text_pole lk-select" id="lk-chat-mode">
-                    <option value="inherit" ${draft.mode === 'inherit' ? 'selected' : ''}>继承角色默认${draft.mode === 'inherit' && targetPreset ? ' · ' + esc(targetPreset) : ''}</option>
-                    <option value="preset" ${draft.mode === 'preset' ? 'selected' : ''}>指定聊天预设</option>
-                    <option value="manual" ${draft.mode === 'manual' ? 'selected' : ''}>使用手动预设</option>
+                    ${Object.entries(chatPresetModeLabels).map(([value, label]) => `<option value="${value}" ${mode === value ? 'selected' : ''}>${label}</option>`).join('')}
                 </select>
-                ${draft.mode === 'preset' ? `<label for="lk-chat-preset">聊天预设</label>
+                ${mode === 'preset' ? `<label class="lk-step-label" for="lk-chat-preset">聊天预设</label>
                 <select class="text_pole lk-select" id="lk-chat-preset">
                     <option value="">请选择预设</option>
                     ${presetOptions.map(preset => `<option value="${esc(preset)}" ${preset === draft.preset ? 'selected' : ''}>${esc(preset)}${missingPreset && preset === draft.preset ? '（当前不可用）' : ''}</option>`).join('')}
                 </select>` : ''}
+                ${mode === 'inherit' ? `<div class="lk-muted-hint">${rolePreset ? esc(rolePreset) : '当前没有可用的角色绑定，将跟随全局预设。'}</div>` : ''}
                 ${missingPreset ? '<p>请选择当前 API 可用的预设。</p>' : ''}
-                ${missingPrompts?.length ? `<p>找不到条目 ${esc(missingPrompts.join('、'))}。保存时会移除这些条目的覆盖。</p>` : ''}
-                ${prompts.length ? '<h4>提示词条目</h4>' : ''}
-                ${prompts.map(prompt => `
-                    <label class="lk-switch-row">
-                        <span>${esc(prompt.name || prompt.identifier)}</span>
-                        <select class="text_pole" data-chat-prompt="${esc(prompt.identifier)}">
-                            <option value="">沿用预设</option>
-                            <option value="on" ${scoped[prompt.identifier] === true ? 'selected' : ''}>开启</option>
-                            <option value="off" ${scoped[prompt.identifier] === false ? 'selected' : ''}>关闭</option>
-                        </select>
-                    </label>`).join('')}
-                <h4>额外启用的全局世界书</h4>
-                ${allBooks.map(book => `<label class="checkbox_label lk-switch-row">
-                    <input type="checkbox" data-chat-book="${esc(book)}" ${draft.lorebooks.includes(book) ? 'checked' : ''} />
-                    <span>${esc(book)}${env.allLorebooks.includes(book) ? '' : '（未找到）'}</span>
-                </label>`).join('')}
-                <div class="lk-drawer-actions">
-                    <button type="button" class="menu_button" data-action="clear-chat-binding">解除绑定</button>
-                    <button type="button" class="menu_button" data-action="save-chat-binding" ${missingPreset ? 'disabled' : ''}>保存聊天绑定</button>
+                ${missingPrompts.length ? `<p>找不到条目 ${esc(missingPrompts.join('、'))}。保存时会移除这些条目的覆盖。</p>` : ''}
+                ${prompts.length ? `
+                    <details id="lk-chat-prompts" class="lk-chat-prompts" ${chatPromptsOpen ? 'open' : ''}>
+                        <summary><span class="lk-step-label">提示词条目</span></summary>
+                        <div class="lk-chat-prompt-list" data-preset="${esc(targetPreset)}">
+                            ${prompts.map((prompt, index) => {
+                                const name = esc(prompt.name || prompt.identifier);
+                                const current = Object.hasOwn(scoped, prompt.identifier) ? (scoped[prompt.identifier] ? 'on' : 'off') : '';
+                                return `
+                                    <div class="lk-chat-prompt-row">
+                                        <span class="lk-chat-prompt-name" id="lk-chat-prompt-name-${index}" title="${name}">${name}</span>
+                                        <div class="lk-chat-prompt-options" role="radiogroup" aria-labelledby="lk-chat-prompt-name-${index}">
+                                            ${chatPromptOptions.map(([value, label]) => `
+                                                <label>
+                                                    <input type="radio" name="lk-chat-prompt-${index}" value="${value}" data-chat-prompt="${esc(prompt.identifier)}" ${current === value ? 'checked' : ''} />
+                                                    <span>${label}</span>
+                                                </label>`).join('')}
+                                        </div>
+                                    </div>`;
+                            }).join('')}
+                        </div>
+                    </details>` : ''}
+                ${renderBookPicker(env, draft.lorebooks, chatBookSearch, '额外启用的全局世界书')}
+                <div class="lk-composer-footer">
+                    <div class="lk-composer-btns">
+                        <button type="button" class="menu_button lk-btn lk-btn-secondary" data-action="clear-chat-binding" ${hasBindingChanges ? '' : 'disabled'}>解除绑定</button>
+                        <button type="button" class="menu_button lk-btn lk-btn-primary" data-action="save-chat-binding"
+                            ${!hasBindingChanges || (mode === 'preset' && (!draft.preset || missingPreset)) ? 'disabled' : ''}>保存聊天绑定</button>
+                    </div>
                 </div>
             </div>`;
     };
 
     const getDraftToSave = () => {
-        const pm = getActivePresetManager();
-        const target = resolvePreset(draft, pm?.apiId);
+        const env = getLiveEnvData();
+        const { pm } = env;
+        const { mode, targetPreset: target } = getChatPresetSelection(draft, env);
         const ids = new Set(listPresetPrompts(pm, target).map(prompt => prompt.identifier));
         return {
             ...draft,
+            mode,
             prompts: draft.preset === target && draft.apiId === pm?.apiId
                 ? Object.fromEntries(Object.entries(draft.prompts).filter(([id]) => ids.has(id))) : {},
         };
@@ -468,7 +585,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const dirty = isPresetComposerDirty();
         const presetSet = new Set(env.allPresets);
         const worldSet = new Set(env.allLorebooks);
-        const activeWorldSet = new Set(env.activeLorebooks);
 
         const primaryPreset = state.selectedPresets[0] || '';
         const extraPresets = state.selectedPresets.slice(1);
@@ -543,49 +659,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 `).join('')}
             </div>
         `;
-
-        // Filter lorebooks for checklist
-        const kw = state.lorebookSearch.trim().toLowerCase();
-        const combinedBooks = uniqueStrings([...state.selectedLorebooks, ...env.allLorebooks]);
-        const missingSelectedBooks = state.selectedLorebooks.filter(b => !worldSet.has(b));
-        const orderedBooks = [...missingSelectedBooks, ...env.allLorebooks];
-        const filteredBooks = kw
-            ? orderedBooks.filter(b => b.toLowerCase().includes(kw))
-            : orderedBooks;
-
-        const checklistHtml = combinedBooks.length === 0
-            ? `<div class="lk-empty-inline">当前酒馆中还没有任何世界书，请先在酒馆「世界书」面板导入或创建。</div>`
-            : filteredBooks.length === 0
-                ? `<div class="lk-empty-inline">没有匹配「${esc(state.lorebookSearch)}」的世界书</div>`
-                : filteredBooks.map((book) => {
-                    const checked = state.selectedLorebooks.includes(book);
-                    const exists = worldSet.has(book);
-                    const isGlobalActive = activeWorldSet.has(book);
-                    return `
-                        <label class="checkbox_label lk-book-item ${checked ? 'is-checked' : ''} ${exists ? '' : 'is-missing'}" title="${esc(book)}">
-                            <input type="checkbox" class="lk-book-checkbox" value="${esc(book)}" ${checked ? 'checked' : ''} />
-                            <span class="lk-book-name">${esc(book)}</span>
-                            ${!exists ? '<span class="lk-mini-tag is-warn">未找到</span>' : isGlobalActive ? '<span class="lk-mini-tag is-live" title="当前全局已启用">启用中</span>' : ''}
-                        </label>
-                    `;
-                }).join('');
-
-        const selectedBookChipsHtml = state.selectedLorebooks.length > 0 ? `
-            <div class="lk-selected-summary">
-                <div class="lk-chip-wrap">
-                    ${state.selectedLorebooks.map((b) => {
-                        const exists = worldSet.has(b);
-                        return `
-                            <span class="lk-chip ${exists ? '' : 'is-missing'}">
-                                <i class="fa-solid fa-book-atlas"></i>
-                                <span>${esc(b)}${exists ? '' : ' (未找到)'}</span>
-                                <button type="button" class="lk-chip-remove" data-action="remove-book-chip" data-book="${esc(b)}" title="取消勾选">&times;</button>
-                            </span>
-                        `;
-                    }).join('')}
-                </div>
-            </div>
-        ` : '';
 
         // Saved Binding Groups List
         const rkw = state.ruleSearch.trim().toLowerCase();
@@ -699,34 +772,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         ${extraPresetHtml}
                     </div>
 
-                    <div class="lk-step">
-                        <div class="lk-step-head">
-                            <div class="lk-step-label">
-                                <span class="lk-step-num">2</span>勾选要启用的世界书
-                                <span class="lk-count-pill ${state.selectedLorebooks.length > 0 ? 'has-val' : ''}">已选 ${state.selectedLorebooks.length} 本</span>
-                            </div>
-                            <div class="lk-step-tools">
-                                ${env.activeLorebooks.length > 0 ? `
-                                    <button type="button" class="lk-link-btn" data-action="fill-active-books">填入当前已开 (${env.activeLorebooks.length})</button>
-                                ` : ''}
-                                ${state.selectedLorebooks.length > 0 ? `
-                                    <button type="button" class="lk-link-btn is-muted" data-action="clear-selected-books">清空已选</button>
-                                ` : ''}
-                            </div>
-                        </div>
-
-                        <div class="lk-search-box">
-                            <i class="fa-solid fa-magnifying-glass"></i>
-                            <input type="search" id="lk-book-search" class="text_pole lk-search-input" placeholder="搜索世界书名称..." value="${esc(state.lorebookSearch)}" />
-                            ${state.lorebookSearch ? `<button type="button" class="lk-search-clear" data-action="clear-book-search" title="清除搜索">&times;</button>` : ''}
-                        </div>
-
-                        ${selectedBookChipsHtml}
-
-                        <div class="lk-book-grid" id="lk-book-grid">
-                            ${checklistHtml}
-                        </div>
-                    </div>
+                    ${renderBookPicker(env, state.selectedLorebooks, state.lorebookSearch, '勾选要启用的世界书', '2')}
 
                     <div class="lk-meta-row">
                         <div class="lk-meta-name-col">
@@ -897,7 +943,11 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         } else if (state.activeTab === 'role-binding') {
             body.innerHTML = renderRoleTab(env);
         } else if (state.activeTab === 'chat-binding') {
+            const previousList = body.querySelector('.lk-chat-prompt-list');
+            const scrollTop = previousList?.scrollTop || 0;
             body.innerHTML = renderChatTab(env);
+            const list = body.querySelector('.lk-chat-prompt-list');
+            if (chatPromptsOpen && list && list.dataset.preset === previousList?.dataset.preset) list.scrollTop = scrollTop;
         } else {
             body.innerHTML = renderSettingsTab(env);
         }
@@ -917,37 +967,31 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
     };
 
-    const refreshBookGridOnly = () => {
-        const env = getLiveEnvData();
+    const getPickedBooks = () => state.activeTab === 'chat-binding' ? draft.lorebooks : state.selectedLorebooks;
+
+    const setPickedBooks = (books, focusedBook) => {
+        if (state.activeTab === 'chat-binding') draft.lorebooks = books;
+        else state.selectedLorebooks = books;
+        const scrollTop = backdrop.querySelector('#lk-book-grid')?.scrollTop || 0;
+        renderAll();
         const grid = backdrop.querySelector('#lk-book-grid');
         if (!grid) return;
-        const worldSet = new Set(env.allLorebooks);
-        const activeWorldSet = new Set(env.activeLorebooks);
-        const kw = state.lorebookSearch.trim().toLowerCase();
-        const missingSelectedBooks = state.selectedLorebooks.filter(b => !worldSet.has(b));
-        const orderedBooks = [...missingSelectedBooks, ...env.allLorebooks];
-        const filteredBooks = kw
-            ? orderedBooks.filter(b => b.toLowerCase().includes(kw))
-            : orderedBooks;
-
-        if (orderedBooks.length === 0) {
-            grid.innerHTML = `<div class="lk-empty-inline">当前酒馆中还没有任何世界书。</div>`;
-        } else if (filteredBooks.length === 0) {
-            grid.innerHTML = `<div class="lk-empty-inline">没有匹配「${esc(state.lorebookSearch)}」的世界书</div>`;
-        } else {
-            grid.innerHTML = filteredBooks.map((book) => {
-                const checked = state.selectedLorebooks.includes(book);
-                const exists = worldSet.has(book);
-                const isGlobalActive = activeWorldSet.has(book);
-                return `
-                    <label class="checkbox_label lk-book-item ${checked ? 'is-checked' : ''} ${exists ? '' : 'is-missing'}" title="${esc(book)}">
-                        <input type="checkbox" class="lk-book-checkbox" value="${esc(book)}" ${checked ? 'checked' : ''} />
-                        <span class="lk-book-name">${esc(book)}</span>
-                        ${!exists ? '<span class="lk-mini-tag is-warn">未找到</span>' : isGlobalActive ? '<span class="lk-mini-tag is-live">启用中</span>' : ''}
-                    </label>
-                `;
-            }).join('');
+        grid.scrollTop = scrollTop;
+        if (focusedBook) {
+            const checkbox = Array.from(grid.querySelectorAll('.lk-book-checkbox')).find(input => input.value === focusedBook);
+            checkbox?.focus({ preventScroll: true });
         }
+    };
+
+    const updateBookSearch = (search) => {
+        if (state.activeTab === 'chat-binding') chatBookSearch = search;
+        else state.lorebookSearch = search;
+        const grid = backdrop.querySelector('#lk-book-grid');
+        if (!grid) return;
+        grid.innerHTML = renderBookGrid(getLiveEnvData(), getPickedBooks(), search);
+        grid.scrollTop = 0;
+        const clear = backdrop.querySelector('[data-action="clear-book-search"]');
+        if (clear) clear.hidden = !search;
     };
 
     let unbindVp = null;
@@ -1071,27 +1115,27 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
             case 'fill-active-books': {
                 const env = getLiveEnvData();
-                state.selectedLorebooks = uniqueStrings([...state.selectedLorebooks, ...env.activeLorebooks]);
-                renderAll();
+                setPickedBooks(uniqueStrings([...getPickedBooks(), ...env.activeLorebooks]));
                 break;
             }
 
             case 'clear-selected-books': {
-                state.selectedLorebooks = [];
-                renderAll();
+                setPickedBooks([]);
                 break;
             }
 
             case 'clear-book-search': {
-                state.lorebookSearch = '';
-                renderAll();
+                const search = backdrop.querySelector('#lk-book-search');
+                if (!search) break;
+                search.value = '';
+                updateBookSearch('');
+                search.focus();
                 break;
             }
 
             case 'remove-book-chip': {
                 const book = actionEl.dataset.book;
-                state.selectedLorebooks = state.selectedLorebooks.filter(b => b !== book);
-                renderAll();
+                setPickedBooks(getPickedBooks().filter(b => b !== book));
                 break;
             }
 
@@ -1310,6 +1354,10 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
     }
 
 
+    backdrop.addEventListener('toggle', (e) => {
+        if (e.target.id === 'lk-chat-prompts' && e.target.isConnected) chatPromptsOpen = e.target.open;
+    }, true);
+
     backdrop.addEventListener('change', (e) => {
         const t = e.target;
 
@@ -1329,17 +1377,9 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
 
         if (t.classList.contains('lk-book-checkbox')) {
-            const book = t.value;
-            if (t.checked) {
-                state.selectedLorebooks = uniqueStrings([...state.selectedLorebooks, book]);
-            } else {
-                state.selectedLorebooks = state.selectedLorebooks.filter(b => b !== book);
-            }
-            const gridEl = backdrop.querySelector('#lk-book-grid');
-            const prevScroll = gridEl ? gridEl.scrollTop : 0;
-            renderAll();
-            const nextGridEl = backdrop.querySelector('#lk-book-grid');
-            if (nextGridEl) nextGridEl.scrollTop = prevScroll;
+            const books = getPickedBooks();
+            const selected = t.checked ? uniqueStrings([...books, t.value]) : books.filter(book => book !== t.value);
+            setPickedBooks(selected, t === document.activeElement ? t.value : '');
             return;
         }
 
@@ -1354,6 +1394,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             draft.preset = t.value === 'preset' ? getCurrentPresetName() : '';
             draft.apiId = draft.preset ? getActivePresetManager()?.apiId : '';
             draft.prompts = {};
+            chatPromptsOpen = false;
             renderAll();
             return;
         }
@@ -1361,22 +1402,27 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             draft.preset = t.value;
             draft.apiId = t.value ? getActivePresetManager()?.apiId || '' : '';
             draft.prompts = {};
+            chatPromptsOpen = false;
             renderAll();
             return;
         }
-        if (t.dataset.chatPrompt) {
-            const apiId = getActivePresetManager()?.apiId;
-            const target = resolvePreset(draft, apiId);
+        if (t.type === 'radio' && t.checked && t.hasAttribute('data-chat-prompt')) {
+            const env = getLiveEnvData();
+            const apiId = env.pm?.apiId;
+            const { targetPreset: target } = getChatPresetSelection(draft, env);
             if (draft.apiId !== apiId || draft.preset !== target) draft.prompts = {};
             draft.apiId = apiId;
             draft.preset = target;
             if (t.value) draft.prompts = { ...draft.prompts, [t.dataset.chatPrompt]: t.value === 'on' };
             else delete draft.prompts[t.dataset.chatPrompt];
-            return;
-        }
-        if (t.dataset.chatBook) {
-            draft.lorebooks = t.checked ? uniqueStrings([...draft.lorebooks, t.dataset.chatBook])
-                : draft.lorebooks.filter(book => book !== t.dataset.chatBook);
+            if (!draft.mode && !Object.keys(draft.prompts).length) {
+                draft.preset = '';
+                draft.apiId = '';
+            }
+            const disabled = !savedChatBinding.mode && !isChatDirty();
+            for (const button of backdrop.querySelectorAll('[data-action="save-chat-binding"], [data-action="clear-chat-binding"]')) {
+                button.disabled = disabled;
+            }
             return;
         }
         if (t.classList.contains('lk-opt-checkbox') && t.dataset.opt) {
@@ -1398,8 +1444,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             return;
         }
         if (t.id === 'lk-book-search') {
-            state.lorebookSearch = t.value;
-            refreshBookGridOnly();
+            updateBookSearch(t.value);
             return;
         }
         if (t.id === 'lk-rule-search') {
