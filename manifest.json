@@ -1,5 +1,5 @@
 {
-    "display_name": "Global Lorebook Keeper for Entity",
+    "display_name": "Global Lorebook Keeper",
     "name": "preset-lorebook-binder",
     "loading_order": 100,
     "requires": [],
@@ -7,8 +7,8 @@
     "js": "index.js",
     "css": "style.css",
     "author": "sleepyfish",
-    "version": "1.1",
-    "homePage": "https://github.com/Molly-0129/global-lorebook-keeper-for-entity",
+    "version": "1.2.0",
+    "homePage": "https://github.com/hanabiovo/st-lorebook-keeper",
     "auto_update": true,
-    "description": "给恶灵用的绑定全局世界书插件"
+    "description": "角色-预设-全局世界书联动绑定器（支持多预设共享绑定与预设更新版本识别）"
 }
