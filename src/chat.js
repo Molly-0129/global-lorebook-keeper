@@ -1,4 +1,4 @@
-import { getActivePresetManager, getStContext } from './st-env.js';
+import { getActivePresetManager, getCurrentCharacter, getStContext } from './st-env.js';
 import { loadSettings, saveSettings, uniqueStrings } from './storage.js';
 
 const metadataKey = 'globalLorebookKeeper';
@@ -18,6 +18,7 @@ export function readChatBinding(chat = currentChat()) {
     const binding = chat?.ctx.chatMetadata[metadataKey];
     if (!binding || typeof binding !== 'object') return {};
     return {
+        mode: binding.mode || (binding.preset ? 'preset' : 'manual'),
         apiId: typeof binding.apiId === 'string' ? binding.apiId : '',
         preset: typeof binding.preset === 'string' ? binding.preset : '',
         prompts: Object.fromEntries(Object.entries(binding.prompts || {}).filter(([, value]) => typeof value === 'boolean')),
@@ -32,7 +33,7 @@ export async function saveChatBinding(chat, binding) {
     if (typeof ctx.saveMetadata !== 'function') throw new Error('当前宿主不支持保存聊天元数据。');
     const metadata = ctx.chatMetadata;
     const previous = metadata[metadataKey];
-    const next = binding?.preset || binding?.lorebooks?.length ? binding : undefined;
+    const next = binding?.mode === 'manual' || binding?.preset || binding?.lorebooks?.length ? binding : undefined;
     if (JSON.stringify(previous) === JSON.stringify(next)) return;
     if (next) metadata[metadataKey] = next;
     else delete metadata[metadataKey];
@@ -44,6 +45,17 @@ export async function saveChatBinding(chat, binding) {
         else metadata[metadataKey] = previous;
         throw error;
     }
+}
+
+export function resolvePreset(binding, apiId, settings = loadSettings()) {
+    if (binding.mode === 'manual') return '';
+    if (binding.mode === 'preset' || (!binding.mode && binding.preset)) {
+        return binding.apiId === apiId ? binding.preset : '';
+    }
+    const avatar = currentChat() && getCurrentCharacter()?.avatar;
+    const role = avatar && settings.characterPresetBindings[avatar];
+    if (typeof role === 'string') return role;
+    return role && role.apiId === apiId ? role.preset : '';
 }
 
 export function isSwitchingChatPreset() {
@@ -60,13 +72,13 @@ export function switchChatPreset(onApplied) {
         if (pm) {
             const apiId = pm.apiId;
             const selected = pm.getSelectedPresetName();
-            const bound = binding.apiId === apiId ? binding.preset : '';
-            const value = bound ? pm.findPreset(bound) : undefined;
             const settings = loadSettings();
+            const bound = resolvePreset(binding, apiId, settings);
+            const value = bound ? pm.findPreset(bound) : undefined;
             const baselines = { ...settings.presetBeforeChat };
             let nextPreset = '';
             if (bound && value != null) {
-                if (selected && selected !== bound && !Object.hasOwn(baselines, apiId)) {
+                if (selected && !Object.hasOwn(baselines, apiId)) {
                     baselines[apiId] = selected;
                     settings.presetBeforeChat = baselines;
                     saveSettings(settings);
@@ -118,7 +130,8 @@ export function installPromptOverrides(manager) {
             const binding = readChatBinding();
             const pm = getActivePresetManager();
             if (pm?.apiId !== 'openai' || binding.apiId !== pm.apiId
-                || binding.preset !== pm.getSelectedPresetName() || !Object.keys(binding.prompts).length) {
+                || binding.preset !== pm.getSelectedPresetName() || !Object.keys(binding.prompts || {}).length
+                || resolvePreset(binding, pm.apiId) !== binding.preset) {
                 return original.apply(this, args);
             }
 

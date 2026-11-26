@@ -1,4 +1,4 @@
-// Global Lorebook Keeper - v1.3
+// Global Lorebook Keeper - v1.4
 // Original author: sleepyfish
 // Enhanced with multi-preset binding groups, smart preset update inheritance & modernized UI
 
@@ -9,6 +9,7 @@ import { selected_world_info, world_names } from '../../../world-info.js';
 
 import {
     applyCurrentChatBinding,
+    handleCharacterRenamed,
     handlePresetRenamed,
     handlePresetSelectChange,
     markPresetImportActivity,
@@ -50,6 +51,7 @@ $(document).ready(function () {
     });
     if (eventTypes?.MAIN_API_CHANGED) eventSource.on(eventTypes.MAIN_API_CHANGED, applyChat);
     if (eventTypes?.OAI_PRESET_IMPORT_READY) eventSource.on(eventTypes.OAI_PRESET_IMPORT_READY, markPresetImportActivity);
+    if (eventTypes?.CHARACTER_RENAMED) eventSource.on(eventTypes.CHARACTER_RENAMED, handleCharacterRenamed);
     if (eventTypes?.PRESET_RENAMED) eventSource.on(eventTypes.PRESET_RENAMED, handlePresetRenamed);
 
     // Track file-based preset imports across OpenAI, Text Completion & Master Import

@@ -222,10 +222,30 @@ export function handlePresetRenamed(payload) {
         }
     }
 
-    if (updatedGroups > 0) {
+    let updatedRole = false;
+    for (const [avatar, binding] of Object.entries(settings.characterPresetBindings)) {
+        if (binding === oldName) {
+            settings.characterPresetBindings[avatar] = newName;
+            updatedRole = true;
+        } else if (binding?.preset === oldName && (!payload.apiId || payload.apiId === binding.apiId)) {
+            settings.characterPresetBindings[avatar] = { ...binding, preset: newName };
+            updatedRole = true;
+        }
+    }
+    if (updatedGroups > 0 || updatedRole) {
         saveSettings(settings);
         toastr.info(`预设已重命名为「${newName}」，绑定关系已自动同步`);
         notifyPanelRefresh();
     }
 }
 
+
+export function handleCharacterRenamed(oldAvatar, newAvatar) {
+    if (!oldAvatar || !newAvatar || oldAvatar === newAvatar) return;
+    const settings = loadSettings();
+    if (!Object.hasOwn(settings.characterPresetBindings, oldAvatar)) return;
+    settings.characterPresetBindings[newAvatar] ??= settings.characterPresetBindings[oldAvatar];
+    delete settings.characterPresetBindings[oldAvatar];
+    saveSettings(settings);
+    notifyPanelRefresh();
+}
