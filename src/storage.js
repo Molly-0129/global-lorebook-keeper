@@ -6,6 +6,28 @@ export const EXTENSION_DISPLAY_NAME = '角色-预设-世界书绑定器';
 export const EXTENSION_STORAGE_NAME = '角色-预设-世界书绑定器';
 export const EXTENSION_SETTINGS_KEY = 'presetBinderSettings';
 
+export const RAINBOW_COLORS = [
+    { key: 'red', label: '红', hex: '#ef4444' },
+    { key: 'orange', label: '橙', hex: '#f97316' },
+    { key: 'yellow', label: '黄', hex: '#eab308' },
+    { key: 'green', label: '绿', hex: '#22c55e' },
+    { key: 'cyan', label: '青', hex: '#06b6d4' },
+    { key: 'blue', label: '蓝', hex: '#3b82f6' },
+    { key: 'purple', label: '紫', hex: '#a855f7' },
+];
+
+const VALID_COLOR_KEYS = new Set(RAINBOW_COLORS.map(c => c.key));
+
+export function getRainbowColorMeta(colorKey) {
+    if (!colorKey) return null;
+    return RAINBOW_COLORS.find(c => c.key === colorKey) || null;
+}
+
+function normalizeColorKey(rawColor) {
+    const k = typeof rawColor === 'string' ? rawColor.trim().toLowerCase() : '';
+    return VALID_COLOR_KEYS.has(k) ? k : '';
+}
+
 export const DEFAULT_OPTIONS = {
     autoBindPresetUpdate: false,   // 默认关闭自动绑定，由用户手动开启
     promptOnPresetUpdate: true,    // 默认开启新版预设识别弹窗提醒
@@ -87,6 +109,7 @@ export function loadSettings() {
             bindingGroups.push({
                 id: typeof g.id === 'string' && g.id ? g.id : makeGroupId(),
                 name: typeof g.name === 'string' ? g.name.trim() : '',
+                color: normalizeColorKey(g.color),
                 presets,
                 lorebooks,
                 updatedAt: Number(g.updatedAt) || Date.now(),
@@ -101,6 +124,7 @@ export function loadSettings() {
             bindingGroups.push({
                 id: makeGroupId(),
                 name: '',
+                color: '',
                 presets: [presetName],
                 lorebooks: books,
                 updatedAt: Date.now(),
@@ -149,6 +173,7 @@ export function saveSettings(data) {
         cleanGroups.push({
             id: g.id || makeGroupId(),
             name: typeof g.name === 'string' ? g.name.trim() : '',
+            color: normalizeColorKey(g.color),
             presets,
             lorebooks,
             updatedAt: Number(g.updatedAt) || Date.now(),
@@ -182,10 +207,12 @@ export function getLorebooksForPreset(settings, presetName) {
     return grp ? [...grp.lorebooks] : [];
 }
 
-export function upsertBindingGroup({ groupId = null, name = '', presets = [], lorebooks = [] }) {
+export function upsertBindingGroup({ groupId = null, name = '', color = '', presets = [], lorebooks = [] }) {
     const settings = loadSettings();
     const cleanPresets = uniqueStrings(presets);
     const cleanLorebooks = uniqueStrings(lorebooks);
+    const cleanName = String(name || '').trim();
+    const cleanColor = normalizeColorKey(color);
     const movedPresets = [];
 
     const remainingGroups = [];
@@ -215,7 +242,8 @@ export function upsertBindingGroup({ groupId = null, name = '', presets = [], lo
 
     let savedGroup;
     if (targetGroup) {
-        targetGroup.name = String(name || '').trim();
+        targetGroup.name = cleanName;
+        targetGroup.color = cleanColor;
         targetGroup.presets = cleanPresets;
         targetGroup.lorebooks = cleanLorebooks;
         targetGroup.updatedAt = Date.now();
@@ -223,7 +251,8 @@ export function upsertBindingGroup({ groupId = null, name = '', presets = [], lo
     } else {
         savedGroup = {
             id: makeGroupId(),
-            name: String(name || '').trim(),
+            name: cleanName,
+            color: cleanColor,
             presets: cleanPresets,
             lorebooks: cleanLorebooks,
             updatedAt: Date.now(),

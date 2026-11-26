@@ -243,6 +243,7 @@ export async function handlePresetSelectChange(event) {
                     const decision = await promptPresetUpdateDetected({
                         newPresetName,
                         matchedPreset: match.matchedPreset,
+                        groupName: match.group.name || '',
                         lorebooks: match.group.lorebooks,
                         availableWorldNames: getWorldNames(),
                         affectedCharNames,

@@ -1,4 +1,4 @@
-// Modernized Binder Management Panel with intuitive 3-step workflow & unsaved-changes guard
+// Modernized Binder Management Panel following SillyTavern native theme variables & controls
 
 import {
     applyGlobalLorebookDiff,
@@ -27,13 +27,24 @@ import {
     EXTENSION_DISPLAY_NAME,
     findGroupByPreset,
     getLorebooksForPreset,
+    getRainbowColorMeta,
     loadSettings,
+    RAINBOW_COLORS,
     saveSettings,
     uniqueStrings,
     upsertBindingGroup,
 } from './storage.js';
 
 let activeModal = null;
+
+function serializePlSnapshot({ name = '', color = '', presets = [], lorebooks = [] }) {
+    return JSON.stringify({
+        name: String(name || '').trim(),
+        color: String(color || '').trim(),
+        presets: uniqueStrings(presets),
+        lorebooks: uniqueStrings(lorebooks),
+    });
+}
 
 /**
  * Opens the main Binder Management Modal.
@@ -50,17 +61,18 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         return;
     }
 
-    // Panel UI state
     const state = {
         activeTab: initialTab,
         // Tab 1: Preset -> Lorebook Composer
         editingGroupId: null,
+        groupName: '',
+        groupColor: '',
         selectedPresets: [],
         selectedLorebooks: [],
         showExtraPresetPicker: false,
         lorebookSearch: '',
         ruleSearch: '',
-        plBaseline: JSON.stringify({ presets: [], lorebooks: [] }),
+        plBaseline: serializePlSnapshot({}),
         plNotice: '',
         lastSavedGroupId: null,
 
@@ -78,9 +90,11 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
     };
 
     const isPresetComposerDirty = () => {
-        const cur = JSON.stringify({
-            presets: uniqueStrings(state.selectedPresets),
-            lorebooks: uniqueStrings(state.selectedLorebooks),
+        const cur = serializePlSnapshot({
+            name: state.groupName,
+            color: state.groupColor,
+            presets: state.selectedPresets,
+            lorebooks: state.selectedLorebooks,
         });
         return cur !== state.plBaseline;
     };
@@ -97,21 +111,27 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
     const resetPresetComposer = (notice = '') => {
         state.editingGroupId = null;
+        state.groupName = '';
+        state.groupColor = '';
         state.selectedPresets = [];
         state.selectedLorebooks = [];
         state.showExtraPresetPicker = false;
-        state.plBaseline = JSON.stringify({ presets: [], lorebooks: [] });
+        state.plBaseline = serializePlSnapshot({});
         state.plNotice = notice;
     };
 
     const loadGroupIntoComposer = (grp, notice = '') => {
         state.editingGroupId = grp.id;
+        state.groupName = grp.name || '';
+        state.groupColor = grp.color || '';
         state.selectedPresets = [...grp.presets];
         state.selectedLorebooks = [...grp.lorebooks];
         state.showExtraPresetPicker = grp.presets.length > 1;
-        state.plBaseline = JSON.stringify({
-            presets: uniqueStrings(grp.presets),
-            lorebooks: uniqueStrings(grp.lorebooks),
+        state.plBaseline = serializePlSnapshot({
+            name: grp.name,
+            color: grp.color,
+            presets: grp.presets,
+            lorebooks: grp.lorebooks,
         });
         state.plNotice = notice;
     };
@@ -132,7 +152,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         state.cpNotice = notice;
     };
 
-    // Build DOM
     const backdrop = document.createElement('div');
     backdrop.id = 'lk-modal-backdrop';
     backdrop.className = 'lk-backdrop ui-widget';
@@ -183,7 +202,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         };
     };
 
-    // Save handlers (return boolean: true if saved successfully)
     const performSavePresetBinding = () => {
         const presets = uniqueStrings(state.selectedPresets);
         const lorebooks = uniqueStrings(state.selectedLorebooks);
@@ -203,6 +221,8 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
         const { group, movedPresets } = upsertBindingGroup({
             groupId: state.editingGroupId,
+            name: state.groupName,
+            color: state.groupColor,
             presets,
             lorebooks,
         });
@@ -210,7 +230,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         state.lastSavedGroupId = group.id;
         resetPresetComposer('');
 
-        // Immediately sync global lorebooks if active preset was part of previous or new group
         const wasActiveInvolved = activePreset && (presets.includes(activePreset) || prevActiveBooks.length > 0);
         let syncMsg = '';
         if (wasActiveInvolved) {
@@ -224,8 +243,12 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             ? `（已将「${movedPresets.join('、')}」从旧规则并入此组）`
             : '';
 
-        const label = presets.length === 1 ? `「${presets[0]}」` : `「${presets[0]}」等 ${presets.length} 个预设`;
-        toastr.success(`已保存 ${label} 的 ${lorebooks.length} 本世界书绑定${movedMsg}${syncMsg}`);
+        const displayTitle = group.name
+            ? `绑定「${group.name}」`
+            : presets.length === 1
+                ? `「${presets[0]}」`
+                : `「${presets[0]}」等 ${presets.length} 个预设`;
+        toastr.success(`已保存 ${displayTitle}（共 ${lorebooks.length} 本世界书）${movedMsg}${syncMsg}`);
 
         syncExtensionDrawerSummary();
         renderAll();
@@ -259,7 +282,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const charObj = env.allCharacters.find(c => c.avatar === avatar);
         const charName = charObj?.name || avatar;
 
-        // If saved character is the currently active character, switch preset right away!
         let switchedMsg = '';
         if (env.currentChar?.avatar === avatar && env.pm) {
             const val = env.pm.findPreset(preset);
@@ -275,10 +297,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         return true;
     };
 
-    /**
-     * Guards actions that would discard unsaved composer changes (closing modal, switching tabs, loading another item).
-     * @returns {Promise<boolean>} true if caller may proceed
-     */
     const confirmOrResolveDirty = async (contextDesc) => {
         if (isPresetComposerDirty()) {
             const action = await promptUnsavedChanges(contextDesc || '「预设 ↔ 世界书」编辑区有未保存的绑定配置');
@@ -301,31 +319,51 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         return true;
     };
 
-    // Rendering pieces
+    // Selective sync for dirty footer & save button when typing custom name without re-rendering input DOM
+    const refreshPlFooterStateOnly = () => {
+        const dirty = isPresetComposerDirty();
+        const isEditing = Boolean(state.editingGroupId);
+        const indicator = backdrop.querySelector('#lk-pl-dirty-indicator');
+        if (indicator) {
+            indicator.innerHTML = dirty
+                ? '<span class="lk-dirty-dot"></span><span>有未保存的修改，点击右侧按钮保存生效</span>'
+                : '<span class="lk-muted-hint">保存后若该预设正在使用，将立即同步全局世界书</span>';
+        }
+        const resetBtn = backdrop.querySelector('#lk-pl-reset-btn');
+        if (resetBtn) {
+            resetBtn.style.display = (dirty || isEditing) ? '' : 'none';
+        }
+    };
+
     const renderStatusBar = (env) => {
         const bar = backdrop.querySelector('#lk-status-bar');
         if (!bar) return;
 
         const activeGroup = env.currentPreset ? findGroupByPreset(env.settings, env.currentPreset) : null;
         const boundCount = activeGroup ? activeGroup.lorebooks.length : 0;
+        const activeColorMeta = activeGroup ? getRainbowColorMeta(activeGroup.color) : null;
+        const colorDotHtml = activeColorMeta
+            ? `<span class="lk-color-dot" style="--dot-color:${activeColorMeta.hex};"></span>`
+            : '';
+        const groupTitleSuffix = activeGroup?.name ? ` · ${esc(activeGroup.name)}` : '';
 
         const presetStatusBadge = !env.currentPreset
             ? '<span class="lk-badge is-muted">无预设</span>'
             : activeGroup
-                ? `<span class="lk-badge is-ok"><i class="fa-solid fa-shield-halved"></i>已绑定 ${boundCount} 本</span>`
+                ? `<span class="lk-badge is-ok">${colorDotHtml}<i class="fa-solid fa-shield-halved"></i>已绑 ${boundCount} 本${groupTitleSuffix}</span>`
                 : '<span class="lk-badge is-muted">未绑定</span>';
 
         let quickActionHtml = '';
         if (env.currentPreset && !activeGroup) {
             quickActionHtml = `
-                <button type="button" class="lk-btn lk-btn-xs lk-btn-accent-soft" data-action="quick-fill-current" title="将当前预设与当前全局已启用的世界书一键填入下方工作台">
+                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-accent-soft" data-action="quick-fill-current" title="将当前预设与当前全局已启用的世界书一键填入下方工作台">
                     <i class="fa-solid fa-wand-magic-sparkles"></i>
                     <span>快速绑定当前状态</span>
                 </button>
             `;
         } else if (env.currentPreset && activeGroup) {
             quickActionHtml = `
-                <button type="button" class="lk-btn lk-btn-xs lk-btn-ghost" data-action="quick-edit-current" data-group-id="${esc(activeGroup.id)}">
+                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-ghost" data-action="quick-edit-current" data-group-id="${esc(activeGroup.id)}">
                     <i class="fa-solid fa-pen-to-square"></i>
                     <span>编辑当前绑定</span>
                 </button>
@@ -369,7 +407,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 <span class="lk-tab-count">${plCount}</span>
             </button>
             <button type="button" role="tab" class="lk-tab ${state.activeTab === 'char-preset' ? 'is-active' : ''}" data-tab="char-preset">
-                <i class="fa-solid fa-user-Astronaut fa-user-tag"></i>
+                <i class="fa-solid fa-user-tag"></i>
                 <span>角色 ↔ 预设</span>
                 <span class="lk-tab-count">${cpCount}</span>
             </button>
@@ -388,7 +426,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const worldSet = new Set(env.allLorebooks);
         const activeWorldSet = new Set(env.activeLorebooks);
 
-        // Include any missing/deleted presets or lorebooks currently in selection so user can see & clean them
         const primaryPreset = state.selectedPresets[0] || '';
         const extraPresets = state.selectedPresets.slice(1);
 
@@ -400,7 +437,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             ...env.allPresets.map((p) => {
                 const existingGrp = findGroupByPreset(env.settings, p);
                 const suffix = existingGrp && existingGrp.id !== state.editingGroupId
-                    ? ` · 已绑 ${existingGrp.lorebooks.length} 本`
+                    ? ` · 已绑${existingGrp.name ? `「${existingGrp.name}」` : ` ${existingGrp.lorebooks.length} 本`}`
                     : '';
                 return `<option value="${esc(p)}" ${p === primaryPreset ? 'selected' : ''}>${esc(p)}${esc(suffix)}</option>`;
             }),
@@ -426,11 +463,11 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 ` : ''}
                 ${state.showExtraPresetPicker ? `
                     <div class="lk-extra-picker-row">
-                        <select class="lk-select lk-select-sm" id="lk-extra-preset-select">
+                        <select class="text_pole lk-select lk-select-sm" id="lk-extra-preset-select">
                             <option value="">-- 选择另一个共用同组世界书的预设（如新版/分支） --</option>
                             ${availableExtraPresets.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}
                         </select>
-                        <button type="button" class="lk-btn lk-btn-xs lk-btn-ghost" data-action="hide-extra-preset-picker">收起</button>
+                        <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-ghost" data-action="hide-extra-preset-picker">收起</button>
                     </div>
                 ` : `
                     <button type="button" class="lk-link-btn" data-action="show-extra-preset-picker">
@@ -440,10 +477,32 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             </div>
         ` : '';
 
+        // 7 Rainbow Color Swatches + Clear swatch
+        const colorSwatchesHtml = `
+            <div class="lk-color-picker" role="radiogroup" aria-label="绑定颜色标记">
+                <button type="button"
+                    class="lk-swatch lk-swatch-none ${!state.groupColor ? 'is-selected' : ''}"
+                    data-action="pick-group-color"
+                    data-color=""
+                    title="无颜色标记">
+                    <i class="fa-solid fa-ban"></i>
+                </button>
+                ${RAINBOW_COLORS.map(c => `
+                    <button type="button"
+                        class="lk-swatch ${state.groupColor === c.key ? 'is-selected' : ''}"
+                        style="--swatch-color: ${c.hex};"
+                        data-action="pick-group-color"
+                        data-color="${c.key}"
+                        title="${c.label}色标记${state.groupColor === c.key ? '（再次点击取消）' : ''}">
+                        ${state.groupColor === c.key ? '<i class="fa-solid fa-check"></i>' : ''}
+                    </button>
+                `).join('')}
+            </div>
+        `;
+
         // Filter lorebooks for checklist
         const kw = state.lorebookSearch.trim().toLowerCase();
         const combinedBooks = uniqueStrings([...state.selectedLorebooks, ...env.allLorebooks]);
-        // Preserve natural `allLorebooks` order, putting missing-but-selected books at top so they are visible
         const missingSelectedBooks = state.selectedLorebooks.filter(b => !worldSet.has(b));
         const orderedBooks = [...missingSelectedBooks, ...env.allLorebooks];
         const filteredBooks = kw
@@ -459,7 +518,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     const exists = worldSet.has(book);
                     const isGlobalActive = activeWorldSet.has(book);
                     return `
-                        <label class="lk-book-item ${checked ? 'is-checked' : ''} ${exists ? '' : 'is-missing'}" title="${esc(book)}">
+                        <label class="checkbox_label lk-book-item ${checked ? 'is-checked' : ''} ${exists ? '' : 'is-missing'}" title="${esc(book)}">
                             <input type="checkbox" class="lk-book-checkbox" value="${esc(book)}" ${checked ? 'checked' : ''} />
                             <span class="lk-book-name">${esc(book)}</span>
                             ${!exists ? '<span class="lk-mini-tag is-warn">未找到</span>' : isGlobalActive ? '<span class="lk-mini-tag is-live" title="当前全局已启用">启用中</span>' : ''}
@@ -487,9 +546,13 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         // Saved Binding Groups List
         const rkw = state.ruleSearch.trim().toLowerCase();
         const filteredGroups = rkw
-            ? env.settings.bindingGroups.filter(g =>
-                g.presets.some(p => p.toLowerCase().includes(rkw))
-                || g.lorebooks.some(b => b.toLowerCase().includes(rkw)))
+            ? env.settings.bindingGroups.filter((g) => {
+                const colorMeta = getRainbowColorMeta(g.color);
+                return (g.name && g.name.toLowerCase().includes(rkw))
+                    || (colorMeta && colorMeta.label.includes(rkw))
+                    || g.presets.some(p => p.toLowerCase().includes(rkw))
+                    || g.lorebooks.some(b => b.toLowerCase().includes(rkw));
+            })
             : env.settings.bindingGroups;
 
         const savedCardsHtml = env.settings.bindingGroups.length === 0
@@ -506,6 +569,15 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     const isBeingEdited = state.editingGroupId === grp.id;
                     const isJustSaved = state.lastSavedGroupId === grp.id;
                     const isCurrentActive = env.currentPreset && grp.presets.includes(env.currentPreset);
+                    const colorMeta = getRainbowColorMeta(grp.color);
+                    const cardStyle = colorMeta ? `style="--lk-tag-color: ${colorMeta.hex};"` : '';
+
+                    const headerBadgeHtml = (grp.name || colorMeta) ? `
+                        <div class="lk-rule-title-row">
+                            ${colorMeta ? `<span class="lk-color-dot" style="--dot-color: ${colorMeta.hex};" title="${colorMeta.label}色标记"></span>` : ''}
+                            ${grp.name ? `<span class="lk-rule-custom-name">${esc(grp.name)}</span>` : ''}
+                        </div>
+                    ` : '';
 
                     const presetBadges = grp.presets.map((p) => {
                         const exists = presetSet.has(p);
@@ -525,20 +597,23 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     }).join('');
 
                     return `
-                        <div class="lk-rule-card ${isBeingEdited ? 'is-editing' : ''} ${isJustSaved ? 'is-flash' : ''} ${isCurrentActive ? 'is-active-group' : ''}" data-group-id="${esc(grp.id)}">
-                            <div class="lk-rule-main">
-                                <div class="lk-rule-presets">${presetBadges}</div>
-                                <div class="lk-rule-arrow"><i class="fa-solid fa-arrow-right-long"></i></div>
-                                <div class="lk-rule-books">${bookPills}</div>
+                        <div class="lk-rule-card ${colorMeta ? 'has-tag-color' : ''} ${isBeingEdited ? 'is-editing' : ''} ${isJustSaved ? 'is-flash' : ''} ${isCurrentActive ? 'is-active-group' : ''}" ${cardStyle} data-group-id="${esc(grp.id)}">
+                            <div class="lk-rule-content">
+                                ${headerBadgeHtml}
+                                <div class="lk-rule-main">
+                                    <div class="lk-rule-presets">${presetBadges}</div>
+                                    <div class="lk-rule-arrow"><i class="fa-solid fa-arrow-right-long"></i></div>
+                                    <div class="lk-rule-books">${bookPills}</div>
+                                </div>
                             </div>
                             <div class="lk-rule-actions">
-                                <button type="button" class="lk-btn lk-btn-xs lk-btn-ghost" data-action="apply-group-now" data-group-id="${esc(grp.id)}" title="立即切换到此预设并启用绑定的世界书">
+                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-ghost" data-action="apply-group-now" data-group-id="${esc(grp.id)}" title="立即切换到此预设并启用绑定的世界书">
                                     <i class="fa-solid fa-bolt"></i><span>套用</span>
                                 </button>
-                                <button type="button" class="lk-btn lk-btn-xs lk-btn-secondary" data-action="edit-group" data-group-id="${esc(grp.id)}" title="加载到上方编辑区修改">
+                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-secondary" data-action="edit-group" data-group-id="${esc(grp.id)}" title="加载到上方编辑区修改名称、颜色或世界书">
                                     <i class="fa-solid fa-pen"></i><span>编辑</span>
                                 </button>
-                                <button type="button" class="lk-btn lk-btn-xs lk-btn-danger-ghost" data-action="delete-group" data-group-id="${esc(grp.id)}" title="删除此绑定关系">
+                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-danger-ghost" data-action="delete-group" data-group-id="${esc(grp.id)}" title="删除此绑定关系">
                                     <i class="fa-solid fa-trash-can"></i>
                                 </button>
                             </div>
@@ -552,10 +627,10 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     <div class="lk-composer-head">
                         <div class="lk-composer-title">
                             <span class="lk-mode-pill ${isEditing ? 'is-edit' : 'is-new'}">${isEditing ? '编辑模式' : '新建绑定'}</span>
-                            <span>${isEditing ? '修改已有世界书绑定组' : '按步骤配置预设与世界书联动'}</span>
+                            <span>${isEditing ? '修改绑定关系的预设、世界书、名称或颜色标记' : '按步骤配置预设与世界书联动'}</span>
                         </div>
                         ${isEditing ? `
-                            <button type="button" class="lk-btn lk-btn-xs lk-btn-ghost" data-action="cancel-pl-edit">
+                            <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-ghost" data-action="cancel-pl-edit">
                                 <i class="fa-solid fa-rotate-left"></i><span>退出编辑</span>
                             </button>
                         ` : ''}
@@ -574,7 +649,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                                 </button>
                             ` : ''}
                         </div>
-                        <select id="lk-main-preset-select" class="lk-select">
+                        <select id="lk-main-preset-select" class="text_pole lk-select">
                             ${mainPresetOptions}
                         </select>
                         ${extraPresetHtml}
@@ -598,7 +673,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
                         <div class="lk-search-box">
                             <i class="fa-solid fa-magnifying-glass"></i>
-                            <input type="search" id="lk-book-search" class="lk-search-input" placeholder="搜索世界书名称..." value="${esc(state.lorebookSearch)}" />
+                            <input type="search" id="lk-book-search" class="text_pole lk-search-input" placeholder="搜索世界书名称..." value="${esc(state.lorebookSearch)}" />
                             ${state.lorebookSearch ? `<button type="button" class="lk-search-clear" data-action="clear-book-search" title="清除搜索">&times;</button>` : ''}
                         </div>
 
@@ -609,17 +684,26 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         </div>
                     </div>
 
+                    <div class="lk-meta-row">
+                        <div class="lk-meta-name-col">
+                            <label class="lk-meta-label" for="lk-group-name-input">绑定名称<span>（选填）</span></label>
+                            <input type="text" id="lk-group-name-input" class="text_pole lk-input" maxlength="40" placeholder="例如：恶灵主力世界观 / 现代日常组..." value="${esc(state.groupName)}" />
+                        </div>
+                        <div class="lk-meta-color-col">
+                            <div class="lk-meta-label">颜色标记<span>（7 色可选）</span></div>
+                            ${colorSwatchesHtml}
+                        </div>
+                    </div>
+
                     <div class="lk-composer-footer">
-                        <div class="lk-dirty-indicator">
+                        <div class="lk-dirty-indicator" id="lk-pl-dirty-indicator">
                             ${dirty ? '<span class="lk-dirty-dot"></span><span>有未保存的修改，点击右侧按钮保存生效</span>' : '<span class="lk-muted-hint">保存后若该预设正在使用，将立即同步全局世界书</span>'}
                         </div>
                         <div class="lk-composer-btns">
-                            ${(dirty || isEditing) ? `
-                                <button type="button" class="lk-btn lk-btn-secondary" data-action="reset-pl-composer">
-                                    <span>${isEditing ? '取消修改' : '重置'}</span>
-                                </button>
-                            ` : ''}
-                            <button type="button" class="lk-btn lk-btn-primary ${state.selectedPresets.length && state.selectedLorebooks.length ? '' : 'is-incomplete'}" data-action="save-pl-binding">
+                            <button type="button" id="lk-pl-reset-btn" class="menu_button lk-btn lk-btn-secondary" data-action="reset-pl-composer" style="${(dirty || isEditing) ? '' : 'display:none;'}">
+                                <span>${isEditing ? '取消修改' : '重置'}</span>
+                            </button>
+                            <button type="button" class="menu_button lk-btn lk-btn-primary ${state.selectedPresets.length && state.selectedLorebooks.length ? '' : 'is-incomplete'}" data-action="save-pl-binding">
                                 <i class="fa-solid fa-check"></i>
                                 <span>${isEditing ? '保存修改' : '保存绑定'}</span>
                             </button>
@@ -633,7 +717,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         ${env.settings.bindingGroups.length >= 3 ? `
                             <div class="lk-search-box lk-search-sm">
                                 <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="search" id="lk-rule-search" class="lk-search-input" placeholder="筛选预设或世界书..." value="${esc(state.ruleSearch)}" />
+                                <input type="search" id="lk-rule-search" class="text_pole lk-search-input" placeholder="筛选名称、预设或世界书..." value="${esc(state.ruleSearch)}" />
                             </div>
                         ` : ''}
                     </div>
@@ -671,15 +755,19 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             ...env.allPresets.map(p => `<option value="${esc(p)}" ${p === state.selectedCharPreset ? 'selected' : ''}>${esc(p)}</option>`),
         ].join('');
 
-        // Linkage preview for selected preset
         let linkageHintHtml = '';
         if (state.selectedCharPreset) {
-            const linkedBooks = getLorebooksForPreset(env.settings, state.selectedCharPreset);
+            const linkedGroup = findGroupByPreset(env.settings, state.selectedCharPreset);
+            const linkedBooks = linkedGroup ? linkedGroup.lorebooks : [];
             if (linkedBooks.length > 0) {
+                const cMeta = getRainbowColorMeta(linkedGroup?.color);
+                const grpBadge = linkedGroup?.name
+                    ? `（绑定组：${cMeta ? `<span class="lk-color-dot" style="--dot-color:${cMeta.hex};"></span>` : ''}<b>${esc(linkedGroup.name)}</b>）`
+                    : '';
                 linkageHintHtml = `
                     <div class="lk-linkage-preview is-linked">
                         <i class="fa-solid fa-link"></i>
-                        <span>联动预览：打开该角色聊天时，将自动切换到预设<b>「${esc(state.selectedCharPreset)}」</b>并联动启用 <b>${linkedBooks.length} 本世界书</b>（${esc(linkedBooks.slice(0, 4).join('、'))}${linkedBooks.length > 4 ? '…' : ''}）。</span>
+                        <span>联动预览：打开该角色聊天时，将自动切换到预设<b>「${esc(state.selectedCharPreset)}」</b>${grpBadge}，并联动启用 <b>${linkedBooks.length} 本世界书</b>（${esc(linkedBooks.slice(0, 4).join('、'))}${linkedBooks.length > 4 ? '…' : ''}）。</span>
                     </div>
                 `;
             } else {
@@ -716,34 +804,44 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     const charName = charObj?.name || avatar;
                     const charExists = Boolean(charObj);
                     const presetExists = presetSet.has(presetName);
-                    const linkedBooks = getLorebooksForPreset(env.settings, presetName);
+                    const linkedGroup = findGroupByPreset(env.settings, presetName);
+                    const linkedBooks = linkedGroup ? linkedGroup.lorebooks : [];
+                    const colorMeta = getRainbowColorMeta(linkedGroup?.color);
                     const isCurrentChar = env.currentChar?.avatar === avatar;
                     const isBeingEdited = state.editingCharAvatar === avatar;
                     const isJustSaved = state.lastSavedCharAvatar === avatar;
+                    const cardStyle = colorMeta ? `style="--lk-tag-color: ${colorMeta.hex};"` : '';
 
                     return `
-                        <div class="lk-rule-card ${isBeingEdited ? 'is-editing' : ''} ${isJustSaved ? 'is-flash' : ''} ${isCurrentChar ? 'is-active-group' : ''}">
-                            <div class="lk-rule-main">
-                                <div class="lk-rule-presets">
-                                    <span class="lk-rule-preset ${isCurrentChar ? 'is-current' : ''} ${charExists ? '' : 'is-missing'}">
-                                        <i class="fa-solid fa-user"></i>
-                                        <span>${esc(charName)}</span>
-                                        ${isCurrentChar ? '<em>当前</em>' : !charExists ? '<em>角色未找到</em>' : ''}
-                                    </span>
-                                </div>
-                                <div class="lk-rule-arrow"><i class="fa-solid fa-arrow-right-long"></i></div>
-                                <div class="lk-rule-books">
-                                    <span class="lk-rule-book ${presetExists ? 'is-preset-pill' : 'is-missing'}">
-                                        <i class="fa-solid fa-sliders"></i> ${esc(presetName)}${presetExists ? '' : ' (预设未找到)'}
-                                    </span>
-                                    ${linkedBooks.length > 0 ? `<span class="lk-mini-tag is-live" title="${esc(linkedBooks.join('、'))}">联动 ${linkedBooks.length} 本世界书</span>` : ''}
+                        <div class="lk-rule-card ${colorMeta ? 'has-tag-color' : ''} ${isBeingEdited ? 'is-editing' : ''} ${isJustSaved ? 'is-flash' : ''} ${isCurrentChar ? 'is-active-group' : ''}" ${cardStyle}>
+                            <div class="lk-rule-content">
+                                <div class="lk-rule-main">
+                                    <div class="lk-rule-presets">
+                                        <span class="lk-rule-preset ${isCurrentChar ? 'is-current' : ''} ${charExists ? '' : 'is-missing'}">
+                                            <i class="fa-solid fa-user"></i>
+                                            <span>${esc(charName)}</span>
+                                            ${isCurrentChar ? '<em>当前</em>' : !charExists ? '<em>角色未找到</em>' : ''}
+                                        </span>
+                                    </div>
+                                    <div class="lk-rule-arrow"><i class="fa-solid fa-arrow-right-long"></i></div>
+                                    <div class="lk-rule-books">
+                                        <span class="lk-rule-book ${presetExists ? '' : 'is-missing'}">
+                                            <i class="fa-solid fa-sliders"></i> ${esc(presetName)}${presetExists ? '' : ' (预设未找到)'}
+                                        </span>
+                                        ${linkedBooks.length > 0 ? `
+                                            <span class="lk-mini-tag is-live" title="${esc(linkedBooks.join('、'))}">
+                                                ${colorMeta ? `<span class="lk-color-dot" style="--dot-color:${colorMeta.hex};"></span>` : ''}
+                                                ${linkedGroup?.name ? `${esc(linkedGroup.name)} · ` : ''}联动 ${linkedBooks.length} 本世界书
+                                            </span>
+                                        ` : ''}
+                                    </div>
                                 </div>
                             </div>
                             <div class="lk-rule-actions">
-                                <button type="button" class="lk-btn lk-btn-xs lk-btn-secondary" data-action="edit-char-binding" data-avatar="${esc(avatar)}">
+                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-secondary" data-action="edit-char-binding" data-avatar="${esc(avatar)}">
                                     <i class="fa-solid fa-pen"></i><span>编辑</span>
                                 </button>
-                                <button type="button" class="lk-btn lk-btn-xs lk-btn-danger-ghost" data-action="delete-char-binding" data-avatar="${esc(avatar)}" title="删除此角色绑定">
+                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-danger-ghost" data-action="delete-char-binding" data-avatar="${esc(avatar)}" title="删除此角色绑定">
                                     <i class="fa-solid fa-trash-can"></i>
                                 </button>
                             </div>
@@ -760,7 +858,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                             <span>设置进入角色聊天时自动切换的预设</span>
                         </div>
                         ${isEditing ? `
-                            <button type="button" class="lk-btn lk-btn-xs lk-btn-ghost" data-action="cancel-cp-edit">
+                            <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-ghost" data-action="cancel-cp-edit">
                                 <i class="fa-solid fa-rotate-left"></i><span>退出编辑</span>
                             </button>
                         ` : ''}
@@ -776,7 +874,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                                     <button type="button" class="lk-link-btn" data-action="pick-current-char">填入当前角色「${esc(env.currentChar.name)}」</button>
                                 ` : ''}
                             </div>
-                            <select id="lk-char-select" class="lk-select">${charOptions}</select>
+                            <select id="lk-char-select" class="text_pole lk-select">${charOptions}</select>
                         </div>
 
                         <div class="lk-step">
@@ -786,7 +884,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                                     <button type="button" class="lk-link-btn" data-action="pick-current-preset-for-char">填入当前预设</button>
                                 ` : ''}
                             </div>
-                            <select id="lk-char-preset-select" class="lk-select">${presetOptions}</select>
+                            <select id="lk-char-preset-select" class="text_pole lk-select">${presetOptions}</select>
                         </div>
                     </div>
 
@@ -798,11 +896,11 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         </div>
                         <div class="lk-composer-btns">
                             ${(dirty || isEditing) ? `
-                                <button type="button" class="lk-btn lk-btn-secondary" data-action="reset-cp-composer">
+                                <button type="button" class="menu_button lk-btn lk-btn-secondary" data-action="reset-cp-composer">
                                     <span>${isEditing ? '取消修改' : '重置'}</span>
                                 </button>
                             ` : ''}
-                            <button type="button" class="lk-btn lk-btn-primary ${state.selectedCharAvatar && state.selectedCharPreset ? '' : 'is-incomplete'}" data-action="save-cp-binding">
+                            <button type="button" class="menu_button lk-btn lk-btn-primary ${state.selectedCharAvatar && state.selectedCharPreset ? '' : 'is-incomplete'}" data-action="save-cp-binding">
                                 <i class="fa-solid fa-check"></i>
                                 <span>${isEditing ? '保存修改' : '保存角色绑定'}</span>
                             </button>
@@ -816,7 +914,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         ${entries.length >= 4 ? `
                             <div class="lk-search-box lk-search-sm">
                                 <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="search" id="lk-char-search" class="lk-search-input" placeholder="搜索角色或预设..." value="${esc(state.charSearch)}" />
+                                <input type="search" id="lk-char-search" class="text_pole lk-search-input" placeholder="搜索角色或预设..." value="${esc(state.charSearch)}" />
                             </div>
                         ` : ''}
                     </div>
@@ -842,70 +940,75 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         <div class="lk-scan-head">
                             <span>发现 ${state.scanResults.length} 个疑似新版预设：</span>
                             ${state.scanResults.length > 1 ? `
-                                <button type="button" class="lk-btn lk-btn-xs lk-btn-primary" data-action="bind-all-scanned">
+                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-primary" data-action="bind-all-scanned">
                                     <i class="fa-solid fa-check-double"></i><span>全部一键继承</span>
                                 </button>
                             ` : ''}
                         </div>
-                        ${state.scanResults.map(item => `
-                            <div class="lk-scan-row">
-                                <div class="lk-scan-info">
-                                    <b>${esc(item.candidatePreset)}</b>
-                                    <span class="lk-muted-hint">匹配自「${esc(item.matchedPreset)}」· 共 ${item.group.lorebooks.length} 本世界书</span>
+                        ${state.scanResults.map((item) => {
+                            const cMeta = getRainbowColorMeta(item.group.color);
+                            const grpTag = item.group.name ? `（${esc(item.group.name)}）` : '';
+                            return `
+                                <div class="lk-scan-row">
+                                    <div class="lk-scan-info">
+                                        <b>${esc(item.candidatePreset)}</b>
+                                        <span class="lk-muted-hint">${cMeta ? `<span class="lk-color-dot" style="--dot-color:${cMeta.hex};"></span>` : ''}匹配自「${esc(item.matchedPreset)}」${grpTag} · 共 ${item.group.lorebooks.length} 本世界书</span>
+                                    </div>
+                                    <div class="lk-scan-actions">
+                                        <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-primary" data-action="bind-scanned-one" data-preset="${esc(item.candidatePreset)}" data-group-id="${esc(item.group.id)}">
+                                            <span>并入绑定</span>
+                                        </button>
+                                        <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-ghost" data-action="ignore-scanned-one" data-preset="${esc(item.candidatePreset)}">
+                                            <span>忽略</span>
+                                        </button>
+                                    </div>
                                 </div>
-                                <div class="lk-scan-actions">
-                                    <button type="button" class="lk-btn lk-btn-xs lk-btn-primary" data-action="bind-scanned-one" data-preset="${esc(item.candidatePreset)}" data-group-id="${esc(item.group.id)}">
-                                        <span>并入绑定</span>
-                                    </button>
-                                    <button type="button" class="lk-btn lk-btn-xs lk-btn-ghost" data-action="ignore-scanned-one" data-preset="${esc(item.candidatePreset)}">
-                                        <span>忽略</span>
-                                    </button>
-                                </div>
-                            </div>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </div>
                 `;
             }
         }
 
+        // Uses pure SillyTavern native `input[type="checkbox"]` so global ST CSS / custom user themes style it natively
         return `
             <div class="lk-section lk-settings-section">
                 <div class="lk-settings-card">
                     <div class="lk-settings-group-title">预设更新识别与继承</div>
 
-                    <label class="lk-switch-row">
+                    <label class="checkbox_label lk-switch-row">
                         <div class="lk-switch-text">
                             <div class="lk-switch-title">自动将新版预设绑定到旧关系</div>
                             <div class="lk-switch-desc">导入或切换到名称近似的新版预设（例如 <code>v1.1 → v1.2</code>、同名覆盖、带日期后缀）时，无需询问直接并入原世界书绑定组并保持世界书开启。默认关闭。</div>
                         </div>
-                        <input type="checkbox" class="lk-toggle-input" data-opt="autoBindPresetUpdate" ${opts.autoBindPresetUpdate ? 'checked' : ''} />
+                        <input type="checkbox" class="lk-opt-checkbox" data-opt="autoBindPresetUpdate" ${opts.autoBindPresetUpdate ? 'checked' : ''} />
                     </label>
 
-                    <label class="lk-switch-row ${opts.autoBindPresetUpdate ? 'is-dimmed' : ''}">
+                    <label class="checkbox_label lk-switch-row ${opts.autoBindPresetUpdate ? 'is-dimmed' : ''}">
                         <div class="lk-switch-text">
                             <div class="lk-switch-title">识别到疑似新版预设时弹窗询问</div>
                             <div class="lk-switch-desc">${opts.autoBindPresetUpdate ? '已开启上方自动绑定，新版预设将直接静默继承并弹出通知。' : '当自动绑定关闭时，若切换到与已绑定预设名称近似的新预设，弹窗提示你是否一键继承世界书，防止忘记绑定掉世界书。'}</div>
                         </div>
-                        <input type="checkbox" class="lk-toggle-input" data-opt="promptOnPresetUpdate" ${opts.promptOnPresetUpdate !== false ? 'checked' : ''} ${opts.autoBindPresetUpdate ? 'disabled' : ''} />
+                        <input type="checkbox" class="lk-opt-checkbox" data-opt="promptOnPresetUpdate" ${opts.promptOnPresetUpdate !== false ? 'checked' : ''} ${opts.autoBindPresetUpdate ? 'disabled' : ''} />
                     </label>
 
-                    <label class="lk-switch-row">
+                    <label class="checkbox_label lk-switch-row">
                         <div class="lk-switch-text">
                             <div class="lk-switch-title">继承新版预设时同步更新角色绑定</div>
                             <div class="lk-switch-desc">当新版预设并入旧绑定组时，默认将原本绑定在旧版本预设上的角色一并更新为新版预设。</div>
                         </div>
-                        <input type="checkbox" class="lk-toggle-input" data-opt="syncCharPresetOnUpdate" ${opts.syncCharPresetOnUpdate ? 'checked' : ''} />
+                        <input type="checkbox" class="lk-opt-checkbox" data-opt="syncCharPresetOnUpdate" ${opts.syncCharPresetOnUpdate ? 'checked' : ''} />
                     </label>
                 </div>
 
                 <div class="lk-settings-card">
                     <div class="lk-settings-group-title">通知与反馈</div>
-                    <label class="lk-switch-row">
+                    <label class="checkbox_label lk-switch-row">
                         <div class="lk-switch-text">
                             <div class="lk-switch-title">切换预设或角色联动时显示右上角提醒</div>
                             <div class="lk-switch-desc">自动启用/卸载世界书或按角色切换预设时，弹出简短 Toast 状态提示（缺失世界书的警告始终保留）。</div>
                         </div>
-                        <input type="checkbox" class="lk-toggle-input" data-opt="notifyOnSwitch" ${opts.notifyOnSwitch !== false ? 'checked' : ''} />
+                        <input type="checkbox" class="lk-opt-checkbox" data-opt="notifyOnSwitch" ${opts.notifyOnSwitch !== false ? 'checked' : ''} />
                     </label>
                 </div>
 
@@ -916,8 +1019,8 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                             <div class="lk-switch-title">扫描当前未绑定的新版预设</div>
                             <div class="lk-switch-desc">立即检查当前 API 下所有预设，找出与现有绑定名称近似但尚未绑定的预设版本。</div>
                         </div>
-                        <button type="button" class="lk-btn lk-btn-secondary" data-action="run-update-scan">
-                            <i class="fa-solid fa-radar fa-magnifying-glass-chart"></i>
+                        <button type="button" class="menu_button lk-btn lk-btn-secondary" data-action="run-update-scan">
+                            <i class="fa-solid fa-magnifying-glass"></i>
                             <span>立即扫描</span>
                         </button>
                     </div>
@@ -971,7 +1074,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
     };
 
-    // Selective re-render for search inputs so typing never loses IME composition or cursor position
     const refreshBookGridOnly = () => {
         const env = getLiveEnvData();
         const grid = backdrop.querySelector('#lk-book-grid');
@@ -995,7 +1097,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 const exists = worldSet.has(book);
                 const isGlobalActive = activeWorldSet.has(book);
                 return `
-                    <label class="lk-book-item ${checked ? 'is-checked' : ''} ${exists ? '' : 'is-missing'}" title="${esc(book)}">
+                    <label class="checkbox_label lk-book-item ${checked ? 'is-checked' : ''} ${exists ? '' : 'is-missing'}" title="${esc(book)}">
                         <input type="checkbox" class="lk-book-checkbox" value="${esc(book)}" ${checked ? 'checked' : ''} />
                         <span class="lk-book-name">${esc(book)}</span>
                         ${!exists ? '<span class="lk-mini-tag is-warn">未找到</span>' : isGlobalActive ? '<span class="lk-mini-tag is-live">启用中</span>' : ''}
@@ -1005,7 +1107,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
     };
 
-    // Close modal safely with unsaved-changes check
     let unbindVp = null;
     let isClosing = false;
 
@@ -1025,7 +1126,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
     const onKeyDown = (e) => {
         if (e.key === 'Escape') {
-            // Ignore if a sub-dialog is currently open above us
             if (document.querySelector('.lk-backdrop-sub')) return;
             e.preventDefault();
             e.stopPropagation();
@@ -1033,17 +1133,14 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
     };
 
-    // Event delegation inside modal
     backdrop.addEventListener('click', async (e) => {
         e.stopPropagation();
 
-        // Backdrop click or top-right X button
         if (e.target === backdrop || e.target.closest('.lk-main-close')) {
             await requestCloseModal();
             return;
         }
 
-        // Tab switching
         const tabBtn = e.target.closest('.lk-tab[data-tab]');
         if (tabBtn) {
             const nextTab = tabBtn.dataset.tab;
@@ -1068,6 +1165,8 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 const env = getLiveEnvData();
                 state.activeTab = 'preset-lorebook';
                 state.editingGroupId = null;
+                state.groupName = '';
+                state.groupColor = '';
                 state.selectedPresets = env.currentPreset ? [env.currentPreset] : [];
                 state.selectedLorebooks = [...env.activeLorebooks];
                 state.showExtraPresetPicker = false;
@@ -1095,6 +1194,14 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 const env = getLiveEnvData();
                 if (!env.currentPreset) return;
                 handlePrimaryPresetPick(env.currentPreset, env);
+                renderAll();
+                break;
+            }
+
+            case 'pick-group-color': {
+                const pickedColor = actionEl.dataset.color || '';
+                // Clicking already-selected color toggles it off for convenience
+                state.groupColor = (pickedColor && state.groupColor === pickedColor) ? '' : pickedColor;
                 renderAll();
                 break;
             }
@@ -1178,7 +1285,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 const grp = env.settings.bindingGroups.find(g => g.id === actionEl.dataset.groupId);
                 if (!grp) return;
 
-                // Find the first existing preset in this group (preferring currentPreset if already in it)
                 const targetPreset = grp.presets.includes(env.currentPreset)
                     ? env.currentPreset
                     : grp.presets.find(p => env.allPresets.includes(p));
@@ -1192,11 +1298,11 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     }
                 }
 
-                // Already on preset or preset missing -> directly ensure its lorebooks are enabled
+                const titleLabel = grp.name ? `「${grp.name}」` : '该绑定组';
                 applyGlobalLorebookDiff([], grp.lorebooks, {
                     presetLabel: targetPreset || grp.presets[0],
                     showToast: true,
-                    customToast: `已启用绑定组中的 ${grp.lorebooks.length} 本世界书`,
+                    customToast: `已启用${titleLabel}中的 ${grp.lorebooks.length} 本世界书`,
                 });
                 renderAll();
                 break;
@@ -1209,10 +1315,10 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 if (!grp) return;
 
                 const isCurrentInGroup = env.currentPreset && grp.presets.includes(env.currentPreset);
-                const label = grp.presets.join('、');
+                const label = grp.name ? `${grp.name}（${grp.presets.join('、')}）` : grp.presets.join('、');
                 const { choice, checked } = await openSubDialog({
                     title: '删除世界书绑定',
-                    bodyHtml: `<p class="lk-sub-text">确定要移除预设 <b>「${esc(label)}」</b> 与 ${grp.lorebooks.length} 本世界书的绑定关系吗？</p>`,
+                    bodyHtml: `<p class="lk-sub-text">确定要移除 <b>「${esc(label)}」</b> 与 ${grp.lorebooks.length} 本世界书的绑定关系吗？</p>`,
                     checkboxLabel: isCurrentInGroup ? `同时在当前全局世界书中关闭这 ${grp.lorebooks.length} 本世界书` : '',
                     checkboxDefault: false,
                     buttons: [
@@ -1413,7 +1519,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             state.selectedPresets = state.selectedPresets.slice(1);
             return;
         }
-        // If user is in New Binding mode and hasn't modified books yet, auto-load existing group for convenience!
         const existingGrp = findGroupByPreset(env.settings, picked);
         if (!state.editingGroupId && existingGrp && state.selectedLorebooks.length === 0 && state.selectedPresets.length <= 1) {
             loadGroupIntoComposer(existingGrp, `预设「${picked}」已有绑定关系，已自动载入现有配置供你修改。`);
@@ -1440,7 +1545,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         state.selectedCharAvatar = avatar;
     }
 
-    // Change events (selects, checkboxes, toggles)
     backdrop.addEventListener('change', (e) => {
         const t = e.target;
 
@@ -1466,7 +1570,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             } else {
                 state.selectedLorebooks = state.selectedLorebooks.filter(b => b !== book);
             }
-            // Preserve scroll position of checklist across re-render
             const gridEl = backdrop.querySelector('#lk-book-grid');
             const prevScroll = gridEl ? gridEl.scrollTop : 0;
             renderAll();
@@ -1488,7 +1591,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             return;
         }
 
-        if (t.classList.contains('lk-toggle-input') && t.dataset.opt) {
+        if (t.classList.contains('lk-opt-checkbox') && t.dataset.opt) {
             const optKey = t.dataset.opt;
             const s = loadSettings();
             s.options[optKey] = Boolean(t.checked);
@@ -1498,9 +1601,14 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
     });
 
-    // Live search inputs without losing focus / IME composition
+    // Live inputs (IME-safe: never destroys the active input element while typing!)
     backdrop.addEventListener('input', (e) => {
         const t = e.target;
+        if (t.id === 'lk-group-name-input') {
+            state.groupName = t.value;
+            refreshPlFooterStateOnly();
+            return;
+        }
         if (t.id === 'lk-book-search') {
             state.lorebookSearch = t.value;
             refreshBookGridOnly();
@@ -1547,9 +1655,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
     };
 }
 
-/**
- * Updates the summary text & quick toggle inside SillyTavern's Extensions Settings drawer if mounted.
- */
 export function syncExtensionDrawerSummary() {
     const s = loadSettings();
     const summaryEl = document.getElementById('lk-drawer-summary');
@@ -1564,11 +1669,7 @@ export function syncExtensionDrawerSummary() {
     }
 }
 
-/**
- * Mounts entry points in both `#extensionsMenu` (magic wand menu) and `#extensions_settings2` (Extensions tab).
- */
 export function mountExtensionEntries() {
-    // 1. Magic wand menu (`#extensionsMenu`)
     const extMenu = document.getElementById('extensionsMenu');
     if (extMenu && !document.getElementById('preset-binder-menu-item')) {
         const item = document.createElement('div');
@@ -1583,7 +1684,6 @@ export function mountExtensionEntries() {
         extMenu.appendChild(item);
     }
 
-    // 2. Extensions settings drawer (`#extensions_settings2` / `#extensions_settings`)
     const host = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
     if (host && !document.getElementById('lk-extension-drawer')) {
         const s = loadSettings();

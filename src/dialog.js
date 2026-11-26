@@ -71,14 +71,6 @@ export function shieldDialogEvents(el) {
 
 /**
  * Opens a compact stacked confirmation / choice dialog (e.g. unsaved changes guard, delete confirm).
- * @param {{
- *   title: string,
- *   bodyHtml: string,
- *   checkboxLabel?: string,
- *   checkboxDefault?: boolean,
- *   buttons: Array<{ key: string, label: string, variant?: 'primary' | 'danger' | 'ghost' | 'secondary', icon?: string }>
- * }} opts
- * @returns {Promise<{ choice: string | null, checked: boolean }>}
  */
 export function openSubDialog({ title, bodyHtml, checkboxLabel = '', checkboxDefault = false, buttons = [] }) {
     return new Promise((resolve) => {
@@ -86,20 +78,20 @@ export function openSubDialog({ title, bodyHtml, checkboxLabel = '', checkboxDef
         backdrop.className = 'lk-backdrop lk-backdrop-sub ui-widget';
 
         const checkHtml = checkboxLabel ? `
-            <label class="lk-check-row lk-sub-check">
+            <label class="checkbox_label lk-check-row lk-sub-check">
                 <input type="checkbox" class="lk-sub-checkbox" ${checkboxDefault ? 'checked' : ''} />
                 <span>${esc(checkboxLabel)}</span>
             </label>
         ` : '';
 
-        const btnsHtml = buttons.map(b => {
+        const btnsHtml = buttons.map((b) => {
             const cls = b.variant === 'primary'
-                ? 'lk-btn lk-btn-primary'
+                ? 'menu_button lk-btn lk-btn-primary'
                 : b.variant === 'danger'
-                    ? 'lk-btn lk-btn-danger'
+                    ? 'menu_button lk-btn lk-btn-danger'
                     : b.variant === 'ghost'
-                        ? 'lk-btn lk-btn-ghost'
-                        : 'lk-btn lk-btn-secondary';
+                        ? 'menu_button lk-btn lk-btn-ghost'
+                        : 'menu_button lk-btn lk-btn-secondary';
             const iconHtml = b.icon ? `<i class="${esc(b.icon)}"></i>` : '';
             return `<button type="button" class="${cls}" data-choice="${esc(b.key)}">${iconHtml}<span>${esc(b.label)}</span></button>`;
         }).join('');
@@ -182,6 +174,7 @@ export async function promptUnsavedChanges(contextDesc = '当前编辑的绑定�
 export async function promptPresetUpdateDetected({
     newPresetName,
     matchedPreset,
+    groupName = '',
     lorebooks,
     availableWorldNames = [],
     affectedCharNames = [],
@@ -190,12 +183,13 @@ export async function promptPresetUpdateDetected({
     const worldSet = new Set(availableWorldNames);
     const pillsHtml = lorebooks.map((b) => {
         const exists = worldSet.size === 0 || worldSet.has(b);
-        return `<span class="lk-chip ${exists ? '' : 'is-missing'}"><i class="fa-solid fa-book-atlas"></i>${esc(b)}${exists ? '' : ' (未找到)'}</span>`;
+        return `<span class="lk-chip ${exists ? '' : 'is-missing'}"><i class="fa-solid fa-book-atlas"></i><span>${esc(b)}${exists ? '' : ' (未找到)'}</span></span>`;
     }).join('');
 
+    const groupDesc = groupName ? `（所属绑定：<b>${esc(groupName)}</b>）` : '';
     const bodyHtml = `
         <p class="lk-sub-text">
-            检测到当前预设 <b>「${esc(newPresetName)}」</b> 与已绑定的 <b>「${esc(matchedPreset)}」</b> 名称近似，疑似更新版本。是否将其加入同一世界书绑定关系？
+            检测到当前预设 <b>「${esc(newPresetName)}」</b> 与已绑定的 <b>「${esc(matchedPreset)}」</b>${groupDesc} 名称近似，疑似更新版本。是否将其加入同一世界书绑定关系？
         </p>
         <div class="lk-sub-preview-label">将自动启用以下 ${lorebooks.length} 本世界书：</div>
         <div class="lk-chip-wrap">${pillsHtml}</div>

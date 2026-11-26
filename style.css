@@ -1,23 +1,27 @@
 /* ==========================================================================
-   Global Lorebook Keeper (角色-预设-世界书绑定器) - Modern Theme-Adaptive UI
-   Adapts automatically to SillyTavern dark, light, and glassmorphism themes
+   Global Lorebook Keeper (角色-预设-世界书绑定器)
+   100% synced with SillyTavern global SmartTheme CSS variables & native controls
    ========================================================================== */
 
-:root {
-    --lk-accent: var(--SmartThemeQuoteColor, #3b82f6);
-    --lk-bg: var(--SmartThemeBlurTintColor, #181a20);
-    --lk-fg: var(--SmartThemeBodyColor, #e5e7eb);
-    --lk-em: var(--SmartThemeEmColor, #9ca3af);
-    --lk-border: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 12%, transparent);
-    --lk-border-strong: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 20%, transparent);
-    --lk-surface: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 4.5%, transparent);
-    --lk-surface-hover: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 8.5%, transparent);
-    --lk-danger: #ef4444;
-    --lk-warn: #f59e0b;
-    --lk-ok: #10b981;
+.lk-backdrop,
+.lk-modal,
+.lk-sub-card {
+    --lk-accent: var(--SmartThemeQuoteColor);
+    --lk-under: var(--SmartThemeUnderlineColor, var(--SmartThemeQuoteColor));
+    --lk-bg: var(--SmartThemeBlurTintColor);
+    --lk-chat-bg: var(--SmartThemeChatTintColor, var(--SmartThemeBlurTintColor));
+    --lk-fg: var(--SmartThemeBodyColor);
+    --lk-em: var(--SmartThemeEmColor);
+    --lk-border: var(--SmartThemeBorderColor);
+    --lk-border-soft: color-mix(in srgb, var(--SmartThemeBodyColor) 12%, transparent);
+    --lk-surface: color-mix(in srgb, var(--SmartThemeChatTintColor, var(--SmartThemeBlurTintColor)) 65%, color-mix(in srgb, var(--SmartThemeBodyColor) 5%, transparent));
+    --lk-surface-hover: color-mix(in srgb, var(--SmartThemeBodyColor) 10%, transparent);
+    --lk-inset: var(--black30a, color-mix(in srgb, var(--SmartThemeBodyColor) 6%, transparent));
+    --lk-danger: var(--preferred, #ef4444);
+    --lk-warn: var(--golden, #f59e0b);
 }
 
-/* Eliminate mobile 300ms tap delay on interactive controls */
+/* Eliminate mobile 300ms tap delay without touching native checkbox styles */
 .lk-backdrop button,
 .lk-backdrop label,
 .lk-backdrop select,
@@ -26,7 +30,7 @@
     box-sizing: border-box;
 }
 
-/* ---------- Modal Backdrop & Container ---------- */
+/* ---------- Modal Backdrop & Container (matches ST native .popup) ---------- */
 .lk-backdrop {
     position: fixed;
     inset: 0;
@@ -35,15 +39,21 @@
     align-items: center;
     justify-content: center;
     padding: 16px;
-    background: rgba(8, 10, 15, 0.62);
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px);
-    animation: lkFadeIn 0.16s ease-out;
+    background-color: var(--black30a, rgba(0, 0, 0, 0.35));
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 8px) * 1.5));
+    -webkit-backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 8px) * 1.5));
+    animation: lkFadeIn 0.15s ease-out;
+}
+
+body.no-blur .lk-backdrop,
+body.no-blur .lk-modal,
+body.no-blur .lk-sub-card {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 .lk-backdrop.lk-backdrop-sub {
     z-index: 10060;
-    background: rgba(6, 8, 12, 0.56);
 }
 
 .lk-backdrop.is-closing {
@@ -57,7 +67,7 @@
 }
 
 @keyframes lkCardPop {
-    from { opacity: 0; transform: translateY(6px) scale(0.985); }
+    from { opacity: 0; transform: translateY(5px) scale(0.985); }
     to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
@@ -68,19 +78,21 @@
 
 .lk-modal {
     width: min(780px, 100%);
-    max-height: min(88vh, 840px);
+    max-height: min(88dvh, 840px);
     display: flex;
     flex-direction: column;
-    border-radius: 14px;
-    background: color-mix(in srgb, var(--lk-bg) 94%, #12141a);
+    border-radius: 12px;
+    background-color: var(--lk-bg);
+    backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px));
+    -webkit-backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px));
     color: var(--lk-fg);
-    border: 1px solid var(--lk-border-strong);
-    box-shadow: 0 22px 56px rgba(0, 0, 0, 0.48);
+    border: 1px solid var(--lk-border);
+    box-shadow: 0 12px 36px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.45));
     overflow: hidden;
-    font-family: var(--mainFontFamily, system-ui, -apple-system, sans-serif);
-    font-size: 14px;
+    font-family: var(--mainFontFamily);
+    font-size: var(--mainFontSize, 14px);
     line-height: 1.45;
-    animation: lkCardPop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: lkCardPop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* ---------- Header ---------- */
@@ -89,68 +101,68 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 15px 20px 13px;
+    padding: 13px 18px 12px;
     border-bottom: 1px solid var(--lk-border);
+    background-color: var(--lk-inset);
     flex-shrink: 0;
 }
 
 .lk-header-title-wrap {
     display: flex;
     align-items: center;
-    gap: 11px;
+    gap: 10px;
     min-width: 0;
 }
 
 .lk-logo-badge {
-    width: 34px;
-    height: 34px;
-    border-radius: 9px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background: color-mix(in srgb, var(--lk-accent) 18%, transparent);
     color: var(--lk-accent);
-    border: 1px solid color-mix(in srgb, var(--lk-accent) 36%, transparent);
-    font-size: 15px;
+    border: 1px solid color-mix(in srgb, var(--lk-accent) 40%, transparent);
+    font-size: 0.95em;
     flex-shrink: 0;
 }
 
 .lk-title {
     margin: 0 !important;
     padding: 0 !important;
-    font-size: 16px !important;
+    font-size: 1.08em !important;
     font-weight: 600 !important;
-    letter-spacing: 0.01em;
     color: var(--lk-fg);
     text-align: left !important;
 }
 
 .lk-subtitle {
-    font-size: 12px;
-    opacity: 0.62;
+    font-size: 0.8em;
+    color: var(--lk-em);
     margin-top: 1px;
 }
 
 .lk-icon-close {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
     border: 1px solid transparent;
     background: transparent;
     color: var(--lk-fg);
-    opacity: 0.62;
-    font-size: 16px;
+    opacity: 0.7;
+    font-size: 1.05em;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
-    transition: opacity 0.15s ease, background 0.15s ease;
+    transition: opacity 0.15s ease, background-color 0.15s ease;
 }
 
 .lk-icon-close:hover {
     opacity: 1;
-    background: var(--lk-surface-hover);
+    background-color: var(--lk-surface-hover);
 }
 
 /* ---------- Status Strip ---------- */
@@ -160,10 +172,10 @@
     justify-content: space-between;
     gap: 10px;
     flex-wrap: wrap;
-    padding: 9px 20px;
-    background: color-mix(in srgb, var(--lk-fg) 3%, transparent);
+    padding: 8px 18px;
+    background: color-mix(in srgb, var(--lk-fg) 3.5%, transparent);
     border-bottom: 1px solid var(--lk-border);
-    font-size: 12.5px;
+    font-size: 0.85em;
     flex-shrink: 0;
 }
 
@@ -183,12 +195,13 @@
 }
 
 .lk-status-label {
-    opacity: 0.56;
+    color: var(--lk-em);
     white-space: nowrap;
 }
 
 .lk-status-val {
     font-weight: 600;
+    color: var(--lk-fg);
     max-width: 170px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -198,29 +211,33 @@
 .lk-status-sep {
     width: 1px;
     height: 12px;
-    background: var(--lk-border-strong);
+    background: var(--lk-border);
 }
 
 .lk-badge {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 1px 7px;
+    gap: 5px;
+    padding: 1px 8px;
     border-radius: 999px;
-    font-size: 11.5px;
+    font-size: 0.9em;
     font-weight: 500;
     white-space: nowrap;
 }
 
 .lk-badge.is-ok {
-    background: color-mix(in srgb, var(--lk-ok) 18%, transparent);
-    color: color-mix(in srgb, var(--lk-ok) 85%, var(--lk-fg));
-    border: 1px solid color-mix(in srgb, var(--lk-ok) 38%, transparent);
+    background: color-mix(in srgb, var(--lk-under) 18%, transparent);
+    color: var(--lk-fg);
+    border: 1px solid color-mix(in srgb, var(--lk-under) 45%, transparent);
+}
+
+.lk-badge.is-ok i {
+    color: var(--lk-under);
 }
 
 .lk-badge.is-muted {
-    background: var(--lk-surface);
-    opacity: 0.72;
+    background: var(--lk-inset);
+    color: var(--lk-em);
     border: 1px solid var(--lk-border);
 }
 
@@ -228,8 +245,8 @@
 .lk-tabs {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 20px 0;
+    gap: 4px;
+    padding: 8px 18px 0;
     border-bottom: 1px solid var(--lk-border);
     flex-shrink: 0;
     overflow-x: auto;
@@ -239,47 +256,48 @@
     position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 8px 13px 10px;
+    gap: 6px;
+    padding: 7px 12px 9px;
     border: none;
     background: transparent;
-    color: var(--lk-fg);
-    opacity: 0.62;
-    font-size: 13.5px;
+    color: var(--lk-em);
+    font-family: inherit;
+    font-size: 0.92em;
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
-    transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    transition: color 0.15s ease, border-color 0.15s ease;
 }
 
 .lk-tab:hover {
-    opacity: 0.92;
+    color: var(--lk-fg);
 }
 
 .lk-tab.is-active {
-    opacity: 1;
     font-weight: 600;
     color: var(--lk-accent);
     border-bottom-color: var(--lk-accent);
 }
 
 .lk-tab-count {
-    font-size: 11.5px;
+    font-size: 0.82em;
     padding: 0 6px;
-    min-width: 19px;
-    height: 18px;
+    min-width: 18px;
+    height: 17px;
     border-radius: 999px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: var(--lk-surface-hover);
+    background: var(--lk-inset);
+    border: 1px solid var(--lk-border-soft);
     color: var(--lk-fg);
 }
 
 .lk-tab.is-active .lk-tab-count {
     background: color-mix(in srgb, var(--lk-accent) 22%, transparent);
+    border-color: color-mix(in srgb, var(--lk-accent) 45%, transparent);
     color: var(--lk-accent);
 }
 
@@ -287,37 +305,37 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--lk-ok);
+    background: var(--lk-accent);
 }
 
 /* ---------- Scrollable Body ---------- */
 .lk-body {
     flex: 1 1 auto;
     overflow-y: auto;
-    padding: 16px 20px 20px;
+    padding: 15px 18px 18px;
 }
 
 .lk-section {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 16px;
 }
 
 /* ---------- Composer Card ---------- */
 .lk-composer {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 15px 16px;
-    border-radius: 11px;
+    gap: 13px;
+    padding: 14px 15px;
+    border-radius: 10px;
     background: var(--lk-surface);
     border: 1px solid var(--lk-border);
-    transition: border-color 0.18s ease, background 0.18s ease;
+    transition: border-color 0.16s ease, background-color 0.16s ease;
 }
 
 .lk-composer.is-editing-mode {
-    border-color: color-mix(in srgb, var(--lk-accent) 55%, var(--lk-border));
-    background: color-mix(in srgb, var(--lk-accent) 5%, var(--lk-surface));
+    border-color: var(--lk-accent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lk-accent) 28%, transparent);
 }
 
 .lk-composer-head {
@@ -332,23 +350,25 @@
     align-items: center;
     gap: 8px;
     font-weight: 600;
-    font-size: 13.5px;
+    font-size: 0.93em;
 }
 
 .lk-mode-pill {
-    font-size: 11.5px;
+    font-size: 0.82em;
     font-weight: 600;
     padding: 2px 8px;
-    border-radius: 6px;
+    border-radius: 5px;
+    border: 1px solid var(--lk-border);
 }
 
 .lk-mode-pill.is-new {
-    background: color-mix(in srgb, var(--lk-fg) 10%, transparent);
+    background: var(--lk-inset);
     color: var(--lk-fg);
 }
 
 .lk-mode-pill.is-edit {
-    background: color-mix(in srgb, var(--lk-accent) 24%, transparent);
+    background: color-mix(in srgb, var(--lk-accent) 22%, transparent);
+    border-color: color-mix(in srgb, var(--lk-accent) 50%, transparent);
     color: var(--lk-accent);
 }
 
@@ -356,11 +376,11 @@
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    padding: 8px 11px;
-    border-radius: 8px;
-    font-size: 12.5px;
-    background: color-mix(in srgb, var(--lk-accent) 13%, transparent);
-    border: 1px solid color-mix(in srgb, var(--lk-accent) 32%, transparent);
+    padding: 7px 10px;
+    border-radius: 7px;
+    font-size: 0.86em;
+    background: color-mix(in srgb, var(--lk-accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--lk-accent) 36%, transparent);
     color: var(--lk-fg);
 }
 
@@ -369,7 +389,7 @@
     margin-top: 2px;
 }
 
-/* ---------- Steps & Form Controls ---------- */
+/* ---------- Steps & Native ST Form Controls (.text_pole) ---------- */
 .lk-two-col {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -379,7 +399,7 @@
 .lk-step {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 6px;
     min-width: 0;
 }
 
@@ -395,7 +415,7 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    font-size: 13px;
+    font-size: 0.9em;
     font-weight: 600;
     margin: 0;
 }
@@ -407,24 +427,25 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 11.5px;
+    font-size: 0.8em;
     font-weight: 700;
     background: color-mix(in srgb, var(--lk-accent) 22%, transparent);
     color: var(--lk-accent);
 }
 
 .lk-count-pill {
-    font-size: 11.5px;
+    font-size: 0.82em;
     font-weight: 500;
     padding: 1px 7px;
     border-radius: 999px;
-    background: var(--lk-surface-hover);
-    opacity: 0.72;
+    background: var(--lk-inset);
+    color: var(--lk-em);
+    border: 1px solid var(--lk-border-soft);
 }
 
 .lk-count-pill.has-val {
-    opacity: 1;
-    background: color-mix(in srgb, var(--lk-accent) 22%, transparent);
+    background: color-mix(in srgb, var(--lk-accent) 20%, transparent);
+    border-color: color-mix(in srgb, var(--lk-accent) 45%, transparent);
     color: var(--lk-accent);
     font-weight: 600;
 }
@@ -440,13 +461,14 @@
     background: transparent;
     padding: 0;
     color: var(--lk-accent);
-    font-size: 12px;
+    font-family: inherit;
+    font-size: 0.84em;
     font-weight: 500;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    opacity: 0.88;
+    opacity: 0.9;
 }
 
 .lk-link-btn:hover {
@@ -455,30 +477,29 @@
 }
 
 .lk-link-btn.is-muted {
-    color: var(--lk-fg);
-    opacity: 0.6;
+    color: var(--lk-em);
 }
 
-.lk-select {
+/* Harmonize with ST's `.text_pole` while giving comfortable height & spacing */
+.lk-modal .lk-select,
+.lk-modal .lk-input {
     width: 100%;
-    height: 36px;
+    height: 34px;
+    margin: 0 !important;
     padding: 0 10px;
-    border-radius: 8px;
-    border: 1px solid var(--lk-border-strong);
-    background: color-mix(in srgb, var(--lk-bg) 82%, #0f1116);
-    color: var(--lk-fg);
-    font-size: 13.5px;
-    outline: none;
-    transition: border-color 0.15s ease;
+    border-radius: 7px;
+    font-size: 0.92em;
 }
 
-.lk-select:focus {
-    border-color: var(--lk-accent);
+.lk-modal .lk-select:focus,
+.lk-modal .lk-input:focus,
+.lk-modal .lk-search-input:focus {
+    border-color: var(--lk-accent) !important;
 }
 
-.lk-select-sm {
-    height: 32px;
-    font-size: 12.5px;
+.lk-modal .lk-select-sm {
+    height: 30px;
+    font-size: 0.86em;
 }
 
 .lk-extra-presets-area {
@@ -495,8 +516,111 @@
 }
 
 .lk-inline-hint {
-    font-size: 12px;
-    opacity: 0.65;
+    font-size: 0.84em;
+    color: var(--lk-em);
+}
+
+/* ---------- Custom Name & 7 Rainbow Color Swatches Row ---------- */
+.lk-meta-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding-top: 4px;
+}
+
+.lk-meta-name-col {
+    flex: 1 1 220px;
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.lk-meta-color-col {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.lk-meta-label {
+    font-size: 0.85em;
+    font-weight: 600;
+    color: var(--lk-fg);
+    margin: 0;
+}
+
+.lk-meta-label span {
+    font-weight: 400;
+    color: var(--lk-em);
+    margin-left: 3px;
+}
+
+.lk-color-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 8px;
+    border-radius: 7px;
+    background: var(--lk-inset);
+    border: 1px solid var(--lk-border);
+}
+
+.lk-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    padding: 0;
+    margin: 0;
+    border: 2px solid transparent;
+    background-color: var(--swatch-color);
+    color: #ffffff;
+    font-size: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
+    opacity: 0.82;
+}
+
+.lk-swatch:hover {
+    opacity: 1;
+    transform: scale(1.12);
+}
+
+.lk-swatch.is-selected {
+    opacity: 1;
+    transform: scale(1.12);
+    border-color: var(--lk-fg);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch-color, var(--lk-fg)) 45%, transparent);
+}
+
+.lk-swatch.lk-swatch-none {
+    background-color: transparent;
+    border: 1.5px dashed var(--lk-em);
+    color: var(--lk-em);
+    font-size: 10px;
+}
+
+.lk-swatch.lk-swatch-none.is-selected {
+    border-style: solid;
+    border-color: var(--lk-fg);
+    color: var(--lk-fg);
+    box-shadow: none;
+}
+
+.lk-color-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background-color: var(--dot-color);
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
 }
 
 /* ---------- Search & Lorebook Multi-Select Grid ---------- */
@@ -508,32 +632,25 @@
 }
 
 .lk-search-box.lk-search-sm {
-    width: 210px;
+    width: 220px;
 }
 
 .lk-search-box > i {
     position: absolute;
     left: 10px;
-    font-size: 12.5px;
-    opacity: 0.48;
+    font-size: 0.85em;
+    color: var(--lk-em);
     pointer-events: none;
+    z-index: 1;
 }
 
-.lk-search-input {
+.lk-modal .lk-search-input {
     width: 100% !important;
-    height: 33px !important;
+    height: 32px !important;
     margin: 0 !important;
     padding: 0 28px 0 30px !important;
-    border-radius: 8px !important;
-    border: 1px solid var(--lk-border-strong) !important;
-    background: color-mix(in srgb, var(--lk-bg) 80%, #0f1116) !important;
-    color: var(--lk-fg) !important;
-    font-size: 13px !important;
-    outline: none !important;
-}
-
-.lk-search-input:focus {
-    border-color: var(--lk-accent) !important;
+    border-radius: 7px !important;
+    font-size: 0.9em !important;
 }
 
 .lk-search-clear {
@@ -543,18 +660,21 @@
     height: 22px;
     border: none;
     background: transparent;
-    color: var(--lk-fg);
-    opacity: 0.6;
+    color: var(--lk-em);
     cursor: pointer;
     font-size: 15px;
     line-height: 1;
 }
 
+.lk-search-clear:hover {
+    color: var(--lk-fg);
+}
+
 .lk-selected-summary {
     padding: 6px 8px;
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--lk-accent) 7%, transparent);
-    border: 1px dashed color-mix(in srgb, var(--lk-accent) 34%, transparent);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--lk-accent) 8%, transparent);
+    border: 1px dashed color-mix(in srgb, var(--lk-accent) 38%, transparent);
 }
 
 .lk-chip-wrap {
@@ -571,16 +691,15 @@
     max-width: 100%;
     padding: 2px 8px;
     border-radius: 6px;
-    font-size: 12px;
-    background: color-mix(in srgb, var(--lk-accent) 18%, transparent);
+    font-size: 0.84em;
+    background: color-mix(in srgb, var(--lk-accent) 16%, transparent);
     border: 1px solid color-mix(in srgb, var(--lk-accent) 38%, transparent);
     color: var(--lk-fg);
 }
 
 .lk-chip.is-missing {
-    background: rgba(245, 158, 11, 0.16);
-    border-color: rgba(245, 158, 11, 0.48);
-    color: #fbbf24;
+    background: color-mix(in srgb, var(--lk-warn) 18%, transparent);
+    border-color: color-mix(in srgb, var(--lk-warn) 50%, transparent);
 }
 
 .lk-chip span {
@@ -609,27 +728,27 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
-    max-height: 188px;
+    max-height: 180px;
     overflow-y: auto;
     padding: 6px;
-    border-radius: 9px;
-    background: color-mix(in srgb, var(--lk-bg) 72%, #0d0f14);
+    border-radius: 8px;
+    background: var(--lk-inset);
     border: 1px solid var(--lk-border);
 }
 
 .lk-book-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 9px;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 6px 9px !important;
     margin: 0 !important;
-    border-radius: 7px;
+    border-radius: 6px;
     border: 1px solid transparent;
-    background: var(--lk-surface);
+    background: color-mix(in srgb, var(--lk-fg) 4%, transparent);
     cursor: pointer;
     user-select: none;
     min-width: 0;
-    transition: background 0.12s ease, border-color 0.12s ease;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 
 .lk-book-item:hover {
@@ -642,41 +761,42 @@
 }
 
 .lk-book-item.is-missing {
-    border-color: rgba(245, 158, 11, 0.45);
+    border-color: color-mix(in srgb, var(--lk-warn) 55%, transparent);
 }
 
-.lk-book-checkbox {
+.lk-book-item input[type="checkbox"] {
     margin: 0 !important;
-    flex-shrink: 0;
-    accent-color: var(--lk-accent);
-    cursor: pointer;
 }
 
 .lk-book-name {
     flex: 1 1 auto;
     min-width: 0;
-    font-size: 12.8px;
+    font-size: 0.88em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .lk-mini-tag {
-    font-size: 10.5px;
-    padding: 1px 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.76em;
+    padding: 1px 6px;
     border-radius: 4px;
     white-space: nowrap;
     flex-shrink: 0;
 }
 
 .lk-mini-tag.is-live {
-    background: color-mix(in srgb, var(--lk-ok) 18%, transparent);
-    color: color-mix(in srgb, var(--lk-ok) 85%, var(--lk-fg));
+    background: color-mix(in srgb, var(--lk-under) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--lk-under) 38%, transparent);
+    color: var(--lk-fg);
 }
 
 .lk-mini-tag.is-warn {
-    background: rgba(245, 158, 11, 0.2);
-    color: #fbbf24;
+    background: color-mix(in srgb, var(--lk-warn) 22%, transparent);
+    color: var(--lk-fg);
 }
 
 /* ---------- Linkage Preview ---------- */
@@ -685,17 +805,16 @@
     align-items: flex-start;
     gap: 8px;
     padding: 8px 11px;
-    border-radius: 8px;
-    font-size: 12.5px;
-    background: var(--lk-surface);
+    border-radius: 7px;
+    font-size: 0.86em;
+    background: var(--lk-inset);
     border: 1px solid var(--lk-border);
-    opacity: 0.88;
+    color: var(--lk-fg);
 }
 
 .lk-linkage-preview.is-linked {
-    background: color-mix(in srgb, var(--lk-ok) 10%, transparent);
-    border-color: color-mix(in srgb, var(--lk-ok) 30%, transparent);
-    opacity: 1;
+    background: color-mix(in srgb, var(--lk-under) 12%, transparent);
+    border-color: color-mix(in srgb, var(--lk-under) 36%, transparent);
 }
 
 .lk-linkage-preview i {
@@ -703,7 +822,7 @@
     color: var(--lk-accent);
 }
 
-/* ---------- Composer Footer & Buttons ---------- */
+/* ---------- Composer Footer & Native Theme Buttons (.menu_button) ---------- */
 .lk-composer-footer {
     display: flex;
     align-items: center;
@@ -718,7 +837,7 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    font-size: 12px;
+    font-size: 0.84em;
 }
 
 .lk-dirty-dot {
@@ -726,13 +845,12 @@
     height: 8px;
     border-radius: 50%;
     background: var(--lk-warn);
-    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
     flex-shrink: 0;
 }
 
 .lk-muted-hint {
-    font-size: 12px;
-    opacity: 0.58;
+    font-size: 0.84em;
+    color: var(--lk-em);
 }
 
 .lk-composer-btns {
@@ -742,95 +860,97 @@
     margin-left: auto;
 }
 
-.lk-btn {
-    height: 34px;
-    padding: 0 14px;
-    border-radius: 8px;
-    border: 1px solid var(--lk-border-strong);
-    font-size: 13px;
+/* Harmonize with ST's `.menu_button` without grayscale dulling or width collapse */
+.lk-backdrop .menu_button.lk-btn {
+    width: auto !important;
+    min-width: max-content;
+    height: 32px;
+    margin: 0 !important;
+    padding: 0 13px !important;
+    border-radius: 7px;
+    filter: none !important;
+    font-family: inherit;
+    font-size: 0.9em;
     font-weight: 500;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
     gap: 6px;
-    cursor: pointer;
     white-space: nowrap;
-    transition: background 0.14s ease, border-color 0.14s ease, opacity 0.14s ease;
 }
 
-.lk-btn-xs {
-    height: 28px;
-    padding: 0 9px;
-    font-size: 12px;
+.lk-backdrop .menu_button.lk-btn-xs {
+    height: 27px;
+    padding: 0 9px !important;
+    font-size: 0.83em;
     border-radius: 6px;
 }
 
-.lk-btn-primary {
-    background: var(--lk-accent);
-    border-color: var(--lk-accent);
-    color: #ffffff;
+.lk-backdrop .menu_button.lk-btn-primary {
+    background-color: color-mix(in srgb, var(--lk-accent) 26%, var(--lk-bg)) !important;
+    border-color: var(--lk-accent) !important;
+    color: var(--lk-fg) !important;
     font-weight: 600;
 }
 
-.lk-btn-primary:hover {
-    filter: brightness(1.08);
+.lk-backdrop .menu_button.lk-btn-primary:hover {
+    background-color: color-mix(in srgb, var(--lk-accent) 38%, var(--lk-bg)) !important;
 }
 
-.lk-btn-primary.is-incomplete {
-    opacity: 0.62;
+.lk-backdrop .menu_button.lk-btn-primary.is-incomplete {
+    opacity: 0.65;
 }
 
-.lk-btn-secondary {
-    background: var(--lk-surface-hover);
-    border-color: var(--lk-border-strong);
-    color: var(--lk-fg);
+.lk-backdrop .menu_button.lk-btn-secondary {
+    background-color: var(--lk-inset) !important;
+    border-color: var(--lk-border) !important;
+    color: var(--lk-fg) !important;
 }
 
-.lk-btn-secondary:hover {
-    background: color-mix(in srgb, var(--lk-fg) 14%, transparent);
+.lk-backdrop .menu_button.lk-btn-secondary:hover {
+    background-color: var(--lk-surface-hover) !important;
 }
 
-.lk-btn-accent-soft {
-    background: color-mix(in srgb, var(--lk-accent) 18%, transparent);
-    border-color: color-mix(in srgb, var(--lk-accent) 45%, transparent);
-    color: var(--lk-accent);
+.lk-backdrop .menu_button.lk-btn-accent-soft {
+    background-color: color-mix(in srgb, var(--lk-accent) 18%, transparent) !important;
+    border-color: color-mix(in srgb, var(--lk-accent) 48%, transparent) !important;
+    color: var(--lk-accent) !important;
     font-weight: 600;
 }
 
-.lk-btn-accent-soft:hover {
-    background: color-mix(in srgb, var(--lk-accent) 26%, transparent);
+.lk-backdrop .menu_button.lk-btn-accent-soft:hover {
+    background-color: color-mix(in srgb, var(--lk-accent) 28%, transparent) !important;
 }
 
-.lk-btn-ghost {
-    background: transparent;
-    border-color: transparent;
-    color: var(--lk-fg);
-    opacity: 0.78;
+.lk-backdrop .menu_button.lk-btn-ghost {
+    background-color: transparent !important;
+    border-color: transparent !important;
+    color: var(--lk-fg) !important;
+    opacity: 0.8;
 }
 
-.lk-btn-ghost:hover {
+.lk-backdrop .menu_button.lk-btn-ghost:hover {
     opacity: 1;
-    background: var(--lk-surface-hover);
+    background-color: var(--lk-surface-hover) !important;
 }
 
-.lk-btn-danger {
-    background: var(--lk-danger);
-    border-color: var(--lk-danger);
-    color: #ffffff;
+.lk-backdrop .menu_button.lk-btn-danger {
+    background-color: color-mix(in srgb, var(--lk-danger) 28%, var(--lk-bg)) !important;
+    border-color: var(--lk-danger) !important;
+    color: var(--lk-fg) !important;
     font-weight: 600;
 }
 
-.lk-btn-danger-ghost {
-    background: transparent;
-    border-color: transparent;
-    color: var(--lk-fg);
-    opacity: 0.6;
+.lk-backdrop .menu_button.lk-btn-danger-ghost {
+    background-color: transparent !important;
+    border-color: transparent !important;
+    color: var(--lk-em) !important;
 }
 
-.lk-btn-danger-ghost:hover {
-    opacity: 1;
-    color: var(--lk-danger);
-    background: rgba(239, 68, 68, 0.14);
+.lk-backdrop .menu_button.lk-btn-danger-ghost:hover {
+    color: var(--lk-danger) !important;
+    background-color: color-mix(in srgb, var(--lk-danger) 15%, transparent) !important;
 }
 
 /* ---------- Saved Bindings Cards ---------- */
@@ -849,12 +969,12 @@
 }
 
 .lk-list-title {
-    font-size: 13.5px;
+    font-size: 0.93em;
     font-weight: 600;
 }
 
 .lk-list-title span {
-    opacity: 0.55;
+    color: var(--lk-em);
     font-weight: 500;
 }
 
@@ -869,35 +989,69 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 11px 13px;
-    border-radius: 10px;
+    padding: 10px 13px;
+    border-radius: 9px;
     background: var(--lk-surface);
     border: 1px solid var(--lk-border);
-    transition: border-color 0.15s ease, background 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .lk-rule-card:hover {
-    border-color: var(--lk-border-strong);
+    background: color-mix(in srgb, var(--lk-fg) 6%, var(--lk-surface));
 }
 
 .lk-rule-card.is-active-group {
-    border-left: 3px solid var(--lk-ok);
+    border-left: 3.5px solid var(--lk-under);
+}
+
+/* Rainbow tag color takes visual precedence on card left bar & subtle tint */
+.lk-rule-card.has-tag-color {
+    border-left: 4px solid var(--lk-tag-color);
+    background: color-mix(in srgb, var(--lk-tag-color) 6%, var(--lk-surface));
+}
+
+.lk-rule-card.has-tag-color:hover {
+    border-color: color-mix(in srgb, var(--lk-tag-color) 45%, var(--lk-border));
+    border-left-color: var(--lk-tag-color);
 }
 
 .lk-rule-card.is-editing {
     border-color: var(--lk-accent);
-    background: color-mix(in srgb, var(--lk-accent) 8%, transparent);
+    background: color-mix(in srgb, var(--lk-accent) 10%, var(--lk-surface));
 }
 
 .lk-rule-card.is-flash {
     animation: lkFlashSaved 0.9s ease-out;
 }
 
+.lk-rule-content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.lk-rule-title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+
+.lk-rule-custom-name {
+    font-size: 0.93em;
+    font-weight: 700;
+    color: var(--lk-fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .lk-rule-main {
     display: flex;
     align-items: center;
-    gap: 10px;
-    flex: 1 1 auto;
+    gap: 9px;
     min-width: 0;
     flex-wrap: wrap;
 }
@@ -912,37 +1066,36 @@
 .lk-rule-preset {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 9px;
-    border-radius: 7px;
-    font-size: 13px;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.87em;
     font-weight: 600;
-    background: color-mix(in srgb, var(--lk-fg) 9%, transparent);
+    background: var(--lk-inset);
     border: 1px solid var(--lk-border);
 }
 
 .lk-rule-preset.is-current {
-    background: color-mix(in srgb, var(--lk-ok) 15%, transparent);
-    border-color: color-mix(in srgb, var(--lk-ok) 40%, transparent);
+    background: color-mix(in srgb, var(--lk-under) 16%, transparent);
+    border-color: color-mix(in srgb, var(--lk-under) 45%, transparent);
 }
 
 .lk-rule-preset.is-missing {
-    background: rgba(245, 158, 11, 0.15);
-    border-color: rgba(245, 158, 11, 0.45);
-    color: #fbbf24;
+    background: color-mix(in srgb, var(--lk-warn) 18%, transparent);
+    border-color: color-mix(in srgb, var(--lk-warn) 50%, transparent);
 }
 
 .lk-rule-preset em {
     font-style: normal;
-    font-size: 11px;
+    font-size: 0.85em;
     font-weight: 500;
-    opacity: 0.85;
+    color: var(--lk-em);
     padding-left: 2px;
 }
 
 .lk-rule-arrow {
-    opacity: 0.42;
-    font-size: 12px;
+    color: var(--lk-em);
+    font-size: 0.82em;
     flex-shrink: 0;
 }
 
@@ -960,15 +1113,14 @@
     gap: 4px;
     padding: 2px 8px;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: 0.83em;
     background: color-mix(in srgb, var(--lk-accent) 13%, transparent);
-    border: 1px solid color-mix(in srgb, var(--lk-accent) 28%, transparent);
+    border: 1px solid color-mix(in srgb, var(--lk-accent) 30%, transparent);
 }
 
 .lk-rule-book.is-missing {
-    background: rgba(245, 158, 11, 0.16);
-    border-color: rgba(245, 158, 11, 0.45);
-    color: #fbbf24;
+    background: color-mix(in srgb, var(--lk-warn) 18%, transparent);
+    border-color: color-mix(in srgb, var(--lk-warn) 50%, transparent);
 }
 
 .lk-rule-actions {
@@ -985,26 +1137,26 @@
     align-items: center;
     text-align: center;
     gap: 6px;
-    padding: 26px 18px;
-    border-radius: 10px;
-    border: 1px dashed var(--lk-border-strong);
-    background: color-mix(in srgb, var(--lk-fg) 2%, transparent);
+    padding: 24px 18px;
+    border-radius: 9px;
+    border: 1px dashed var(--lk-border);
+    background: var(--lk-inset);
 }
 
 .lk-empty-icon {
-    font-size: 22px;
-    opacity: 0.42;
+    font-size: 1.5em;
+    color: var(--lk-em);
     margin-bottom: 2px;
 }
 
 .lk-empty-title {
     font-weight: 600;
-    font-size: 13.5px;
+    font-size: 0.93em;
 }
 
 .lk-empty-desc {
-    font-size: 12.5px;
-    opacity: 0.62;
+    font-size: 0.85em;
+    color: var(--lk-em);
     max-width: 460px;
 }
 
@@ -1012,37 +1164,37 @@
     grid-column: 1 / -1;
     padding: 14px 10px;
     text-align: center;
-    font-size: 12.5px;
-    opacity: 0.6;
+    font-size: 0.86em;
+    color: var(--lk-em);
 }
 
-/* ---------- Tab 3: Settings & Toggle Switches ---------- */
+/* ---------- Tab 3: Settings (Pure Native ST Checkbox/Toggle) ---------- */
 .lk-settings-card {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 14px 16px;
-    border-radius: 11px;
+    gap: 10px;
+    padding: 13px 15px;
+    border-radius: 10px;
     background: var(--lk-surface);
     border: 1px solid var(--lk-border);
 }
 
 .lk-settings-group-title {
-    font-size: 12px;
+    font-size: 0.82em;
     font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    opacity: 0.58;
+    letter-spacing: 0.03em;
+    color: var(--lk-em);
 }
 
 .lk-switch-row,
 .lk-tool-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 6px 0;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 16px !important;
+    padding: 6px 0 !important;
     margin: 0 !important;
+    width: 100%;
     cursor: pointer;
 }
 
@@ -1051,13 +1203,19 @@
 }
 
 .lk-switch-row + .lk-switch-row {
-    border-top: 1px solid var(--lk-border);
-    padding-top: 12px;
+    border-top: 1px solid var(--lk-border-soft);
+    padding-top: 11px !important;
 }
 
 .lk-switch-row.is-dimmed {
     opacity: 0.52;
     cursor: default;
+}
+
+/* Leave input[type="checkbox"] completely to SillyTavern's native / global theme styling! */
+.lk-switch-row input[type="checkbox"] {
+    margin: 0 !important;
+    flex-shrink: 0;
 }
 
 .lk-switch-text {
@@ -1066,67 +1224,32 @@
 }
 
 .lk-switch-title {
-    font-size: 13.5px;
+    font-size: 0.93em;
     font-weight: 600;
+    color: var(--lk-fg);
 }
 
 .lk-switch-desc {
-    font-size: 12px;
-    opacity: 0.66;
+    font-size: 0.83em;
+    color: var(--lk-em);
     margin-top: 2px;
     line-height: 1.45;
 }
 
 .lk-switch-desc code {
-    font-size: 11.5px;
+    font-size: 0.92em;
     padding: 1px 5px;
     border-radius: 4px;
-    background: var(--lk-surface-hover);
-}
-
-.lk-toggle-input {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 40px !important;
-    height: 22px !important;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--lk-fg) 22%, transparent);
-    border: 1px solid var(--lk-border-strong);
-    position: relative;
-    cursor: pointer;
-    flex-shrink: 0;
-    margin: 0 !important;
-    transition: background 0.18s ease, border-color 0.18s ease;
-}
-
-.lk-toggle-input::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #ffffff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-    transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.lk-toggle-input:checked {
-    background: var(--lk-accent);
-    border-color: var(--lk-accent);
-}
-
-.lk-toggle-input:checked::after {
-    transform: translateX(18px);
+    background: var(--lk-inset);
+    color: var(--lk-fg);
 }
 
 .lk-scan-empty {
-    padding: 9px 12px;
-    border-radius: 8px;
-    font-size: 12.5px;
-    background: color-mix(in srgb, var(--lk-ok) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--lk-ok) 32%, transparent);
+    padding: 8px 11px;
+    border-radius: 7px;
+    font-size: 0.86em;
+    background: color-mix(in srgb, var(--lk-under) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--lk-under) 36%, transparent);
 }
 
 .lk-scan-results {
@@ -1134,7 +1257,7 @@
     flex-direction: column;
     gap: 8px;
     padding-top: 8px;
-    border-top: 1px solid var(--lk-border);
+    border-top: 1px solid var(--lk-border-soft);
 }
 
 .lk-scan-head,
@@ -1143,7 +1266,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    font-size: 12.5px;
+    font-size: 0.86em;
     font-weight: 600;
 }
 
@@ -1153,8 +1276,8 @@
     justify-content: space-between;
     gap: 10px;
     padding: 8px 10px;
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--lk-bg) 70%, transparent);
+    border-radius: 7px;
+    background: var(--lk-inset);
     border: 1px solid var(--lk-border);
 }
 
@@ -1163,7 +1286,7 @@
     flex-direction: column;
     gap: 2px;
     min-width: 0;
-    font-size: 13px;
+    font-size: 0.9em;
 }
 
 .lk-scan-actions {
@@ -1178,23 +1301,25 @@
     flex-direction: column;
     gap: 8px;
     padding-top: 10px;
-    border-top: 1px solid var(--lk-border);
+    border-top: 1px solid var(--lk-border-soft);
 }
 
-/* ---------- Stacked Sub-Dialog (Confirm / Unsaved Guard / Update Prompt) ---------- */
+/* ---------- Stacked Sub-Dialog ---------- */
 .lk-sub-card {
     width: min(460px, 100%);
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 16px 18px;
-    border-radius: 13px;
-    background: color-mix(in srgb, var(--lk-bg) 96%, #12141a);
+    padding: 15px 17px;
+    border-radius: 11px;
+    background-color: var(--lk-bg);
+    backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px));
+    -webkit-backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px));
     color: var(--lk-fg);
-    border: 1px solid var(--lk-border-strong);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
-    font-family: var(--mainFontFamily, system-ui, sans-serif);
-    font-size: 13.5px;
+    border: 1px solid var(--lk-border);
+    box-shadow: 0 16px 42px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.5));
+    font-family: var(--mainFontFamily);
+    font-size: var(--mainFontSize, 14px);
     animation: lkCardPop 0.15s ease-out;
 }
 
@@ -1206,37 +1331,36 @@
 }
 
 .lk-sub-title {
-    font-size: 15px;
+    font-size: 1.02em;
     font-weight: 600;
 }
 
 .lk-sub-text {
     margin: 0 0 8px;
     line-height: 1.5;
-    opacity: 0.92;
 }
 
 .lk-sub-preview-label {
-    font-size: 12px;
-    opacity: 0.68;
+    font-size: 0.85em;
+    color: var(--lk-em);
     margin-bottom: 6px;
 }
 
 .lk-check-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 8px 10px;
-    border-radius: 8px;
-    background: var(--lk-surface);
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+    padding: 8px 10px !important;
+    margin: 0 !important;
+    border-radius: 7px;
+    background: var(--lk-inset);
     border: 1px solid var(--lk-border);
-    font-size: 12.5px;
+    font-size: 0.88em;
     cursor: pointer;
 }
 
-.lk-check-row input {
+.lk-check-row input[type="checkbox"] {
     margin-top: 2px !important;
-    accent-color: var(--lk-accent);
 }
 
 .lk-sub-footer {
@@ -1257,8 +1381,8 @@
 }
 
 .lk-drawer-summary {
-    font-size: 12.5px;
-    opacity: 0.75;
+    font-size: 0.86em;
+    color: var(--lk-em);
 }
 
 .lk-drawer-actions {
@@ -1283,15 +1407,15 @@
     }
 
     .lk-modal {
-        max-height: 93vh;
-        border-radius: 12px;
+        max-height: 93dvh;
+        border-radius: 10px;
     }
 
     .lk-header,
     .lk-status-bar,
     .lk-body {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding-left: 13px;
+        padding-right: 13px;
     }
 
     .lk-tabs {
@@ -1302,6 +1426,15 @@
     .lk-two-col,
     .lk-book-grid {
         grid-template-columns: 1fr;
+    }
+
+    .lk-meta-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .lk-color-picker {
+        justify-content: space-between;
     }
 
     .lk-rule-card {
@@ -1316,7 +1449,7 @@
     .lk-rule-actions {
         justify-content: flex-end;
         padding-top: 6px;
-        border-top: 1px solid var(--lk-border);
+        border-top: 1px solid var(--lk-border-soft);
     }
 
     .lk-search-box.lk-search-sm {
