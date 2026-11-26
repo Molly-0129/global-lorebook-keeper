@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerStEnv } from '../src/st-env.js';
 import { loadSettings, saveSettings } from '../src/storage.js';
-import { currentChat, installPromptOverrides, saveChatBinding, switchChatPreset } from '../src/chat.js';
+import { currentChat, installPromptOverrides, listPresetPrompts, saveChatBinding, switchChatPreset } from '../src/chat.js';
 
 test('role defaults, chat exceptions and manual mode share one preset switch', async () => {
     const chats = {
@@ -64,4 +64,24 @@ test('role defaults, chat exceptions and manual mode share one preset switch', a
     pm.apiId = 'other';
     selected = 'Other API selection';
     await open('ordinary', 'Other API selection');
+});
+
+test('the binding panel follows the preset order, including disabled prompts', () => {
+    const preset = {
+        prompts: [
+            { identifier: 'interrupt' },
+            { identifier: 'unused' },
+            { identifier: 'do-not-interrupt' },
+        ],
+        prompt_order: [{ character_id: 100001, order: [
+            { identifier: 'do-not-interrupt', enabled: false },
+            { identifier: 'missing' },
+            { identifier: 'interrupt', enabled: true },
+        ] }],
+    };
+    const manager = { apiId: 'openai', getCompletionPresetByName: () => preset };
+    assert.deepEqual(listPresetPrompts(manager, 'Story').map(prompt => prompt.identifier), [
+        'do-not-interrupt',
+        'interrupt',
+    ]);
 });

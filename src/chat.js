@@ -114,8 +114,8 @@ export function listPresetPrompts(pm, preset) {
     const prompts = Array.isArray(configuration?.prompts) ? configuration.prompts : [];
     const order = configuration?.prompt_order?.find(list => String(list.character_id) === '100001')?.order;
     if (!Array.isArray(order)) return [];
-    const identifiers = new Set(order.map(entry => entry.identifier));
-    return prompts.filter(prompt => typeof prompt.identifier === 'string' && identifiers.has(prompt.identifier));
+    const promptsById = new Map(prompts.map(prompt => [prompt.identifier, prompt]));
+    return order.map(entry => promptsById.get(entry.identifier)).filter(Boolean);
 }
 
 export function installPromptOverrides(manager) {
