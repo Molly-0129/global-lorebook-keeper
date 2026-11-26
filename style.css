@@ -1200,9 +1200,21 @@ body.no-blur .lk-sub-card {
     white-space: nowrap;
 }
 
-.lk-chat-binding-status {
+.lk-binding-status {
+    font-weight: 400;
+}
+
+.lk-binding-status .lk-rule-preset,
+.lk-binding-status .lk-rule-preset > span,
+.lk-binding-status .lk-rule-book {
     min-width: 0;
     overflow-wrap: anywhere;
+}
+
+.lk-binding-status .lk-rule-preset,
+.lk-binding-status .lk-rule-book {
+    box-sizing: border-box;
+    max-width: 100%;
 }
 
 .lk-chat-prompts {

@@ -59,6 +59,30 @@ function getChatPresetSelection(binding, env) {
     return { mode, rolePreset, targetPreset };
 }
 
+function renderBookTags(books, worldSet) {
+    return books.map(book => {
+        const exists = worldSet.has(book);
+        return `<span class="lk-rule-book ${exists ? '' : 'is-missing'}">${esc(book)}${exists ? '' : ' (未找到)'}</span>`;
+    }).join('');
+}
+
+function renderBindingStatus({ label, preset, unavailable, apiId, books = [], allLorebooks, promptsAdjusted }) {
+    return `
+        <span class="lk-rule-main lk-binding-status">
+            <span class="lk-muted-hint">${esc(label)}</span>
+            ${preset ? `
+                <span class="lk-rule-preset ${unavailable ? 'is-missing' : ''}"${apiId ? ` title="${esc(apiId)}"` : ''}>
+                    <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                    <span>${esc(preset)}</span>
+                    ${unavailable ? '<em>当前不可用</em>' : ''}
+                </span>` : ''}
+            ${books.length ? `
+                ${preset ? '<span class="lk-rule-arrow" aria-hidden="true"><i class="fa-solid fa-arrow-right-long"></i></span>' : ''}
+                <span class="lk-rule-books">${renderBookTags(books, new Set(allLorebooks))}</span>` : ''}
+            ${promptsAdjusted ? '<span class="lk-mini-tag is-live">已调整提示词条目</span>' : ''}
+        </span>`;
+}
+
 function renderBookGrid(env, selectedBooks, search) {
     const worldSet = new Set(env.allLorebooks);
     const activeWorldSet = new Set(env.activeLorebooks);
@@ -253,12 +277,20 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         if (!characters.some(c => c.avatar === editingAvatar)) editingAvatar = env.currentChar?.avatar || characters[0].avatar;
         const role = env.settings.characterPresetBindings[editingAvatar];
         const name = typeof role === 'string' ? role : role?.preset;
+        const unavailable = name && (!env.allPresets.includes(name) || (role?.apiId && role.apiId !== env.pm?.apiId));
         return `<div class="lk-settings-card">
             <label for="lk-role-avatar">角色卡</label>
             <select id="lk-role-avatar" class="text_pole lk-select">
                 ${characters.map(c => `<option value="${esc(c.avatar)}" ${c.avatar === editingAvatar ? 'selected' : ''}>${esc(c.name || c.avatar)}</option>`).join('')}
             </select>
-            <p>当前默认预设：${esc(name || '未绑定')}${role?.apiId ? ' · ' + esc(role.apiId) : ''}</p>
+            ${renderBindingStatus({
+                label: name ? '当前默认预设' : '未绑定角色预设',
+                preset: name,
+                unavailable,
+                apiId: role?.apiId,
+                books: unavailable ? [] : getLorebooksForPreset(env.settings, name),
+                allLorebooks: env.allLorebooks,
+            })}
             <label for="lk-role-preset">角色默认预设</label>
             <select id="lk-role-preset" class="text_pole lk-select">
                 <option value="">选择预设</option>
@@ -287,19 +319,29 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const hasBindingChanges = Boolean(savedMode) || isChatDirty();
         const savedPreset = savedMode === 'preset' ? savedChatBinding.preset : savedMode === 'inherit' ? rolePreset : '';
         const savedPresetUnavailable = savedMode === 'preset' && (savedChatBinding.apiId !== apiId || !env.allPresets.includes(savedPreset));
-        const savedSource = savedMode === 'preset' ? '指定预设' : chatPresetModeLabels[savedMode];
-        const savedSummary = savedMode ? [
-            '已保存', savedSource,
-            savedPresetUnavailable ? `${savedPreset || '预设'}（不可用）` : savedPreset,
-            savedMode === 'inherit' && !rolePreset ? '当前跟随全局预设' : '',
-            `额外世界书 ${savedChatBinding.lorebooks.length} 本`,
-        ].filter(Boolean).join(' · ') : '未设置聊天绑定';
+        const savedSource = savedMode === 'preset' ? '指定预设'
+            : savedMode === 'inherit' && !rolePreset ? '当前跟随全局预设' : chatPresetModeLabels[savedMode];
+        const statusPreset = savedPresetUnavailable ? savedPreset || '预设' : savedPreset || env.currentPreset;
+        const promptsAdjusted = savedPreset && !savedPresetUnavailable && savedPreset === env.currentPreset
+            && savedChatBinding.preset === savedPreset && savedChatBinding.apiId === apiId
+            && listPresetPrompts(env.pm, savedPreset).some(prompt => Object.hasOwn(savedChatBinding.prompts, prompt.identifier));
+        const savedStatus = savedMode ? renderBindingStatus({
+            label: `已保存 · ${savedSource}`,
+            preset: statusPreset,
+            unavailable: savedPresetUnavailable,
+            books: uniqueStrings([
+                ...getLorebooksForPreset(env.settings, savedPresetUnavailable ? '' : statusPreset),
+                ...savedChatBinding.lorebooks,
+            ]),
+            allLorebooks: env.allLorebooks,
+            promptsAdjusted,
+        }) : '<span class="lk-muted-hint">未设置聊天绑定</span>';
         return `
             <div class="lk-settings-card">
                 <h3 class="lk-chat-heading">
                     <span>当前聊天</span>
                     <span class="lk-chat-heading-name" title="${esc(chat.name)}">${esc(chat.name)}</span>
-                    <span class="lk-count-pill lk-chat-binding-status ${savedMode ? 'has-val' : ''}" title="${esc(savedSummary)}">${esc(savedSummary)}</span>
+                    ${savedStatus}
                 </h3>
                 <label class="lk-step-label" for="lk-chat-mode">预设来源</label>
                 <select class="text_pole lk-select" id="lk-chat-mode">
@@ -708,10 +750,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         `;
                     }).join('');
 
-                    const bookPills = grp.lorebooks.map((b) => {
-                        const exists = worldSet.has(b);
-                        return `<span class="lk-rule-book ${exists ? '' : 'is-missing'}">${esc(b)}${exists ? '' : ' (未找到)'}</span>`;
-                    }).join('');
+                    const bookPills = renderBookTags(grp.lorebooks, worldSet);
 
                     return `
                         <div class="lk-rule-card ${colorMeta ? 'has-tag-color' : ''} ${isBeingEdited ? 'is-editing' : ''} ${isJustSaved ? 'is-flash' : ''} ${isCurrentActive ? 'is-active-group' : ''}" ${cardStyle} data-group-id="${esc(grp.id)}">
