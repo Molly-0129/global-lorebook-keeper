@@ -66,16 +66,27 @@ function renderBookTags(books, worldSet) {
     }).join('');
 }
 
+function getRolePresetStatus(binding, env) {
+    const preset = typeof binding === 'string' ? binding : binding?.preset;
+    const apiId = binding?.apiId;
+    const unavailable = preset && (!env.allPresets.includes(preset) || (apiId && apiId !== env.pm?.apiId));
+    return { preset, apiId, unavailable };
+}
+
+function renderPresetTag(preset, { unavailable, apiId }) {
+    return `
+        <span class="lk-rule-preset ${unavailable ? 'is-missing' : ''}"${apiId ? ` title="${esc(apiId)}"` : ''}>
+            <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+            <span>${esc(preset)}</span>
+            ${unavailable ? '<em>当前不可用</em>' : ''}
+        </span>`;
+}
+
 function renderBindingStatus({ label, preset, unavailable, apiId, books = [], allLorebooks, promptsAdjusted }) {
     return `
         <span class="lk-rule-main lk-binding-status">
             <span class="lk-muted-hint">${esc(label)}</span>
-            ${preset ? `
-                <span class="lk-rule-preset ${unavailable ? 'is-missing' : ''}"${apiId ? ` title="${esc(apiId)}"` : ''}>
-                    <i class="fa-solid fa-sliders" aria-hidden="true"></i>
-                    <span>${esc(preset)}</span>
-                    ${unavailable ? '<em>当前不可用</em>' : ''}
-                </span>` : ''}
+            ${preset ? renderPresetTag(preset, { unavailable, apiId }) : ''}
             ${books.length ? `
                 ${preset ? '<span class="lk-rule-arrow" aria-hidden="true"><i class="fa-solid fa-arrow-right-long"></i></span>' : ''}
                 <span class="lk-rule-books">${renderBookTags(books, new Set(allLorebooks))}</span>` : ''}
@@ -272,13 +283,14 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
     let editingAvatar = '';
     const renderRoleTab = (env) => {
-        const characters = getStContext()?.characters?.filter(c => c?.avatar) || [];
-        if (!characters.length) return '<p class="lk-empty-inline">请先导入角色卡。</p>';
-        if (!characters.some(c => c.avatar === editingAvatar)) editingAvatar = env.currentChar?.avatar || characters[0].avatar;
-        const role = env.settings.characterPresetBindings[editingAvatar];
-        const name = typeof role === 'string' ? role : role?.preset;
-        const unavailable = name && (!env.allPresets.includes(name) || (role?.apiId && role.apiId !== env.pm?.apiId));
-        return `<div class="lk-settings-card">
+        const ctx = getStContext();
+        const characters = ctx?.characters?.filter(c => c?.avatar) || [];
+        const charactersByAvatar = new Map(characters.map(character => [character.avatar, character]));
+        if (!charactersByAvatar.has(editingAvatar)) editingAvatar = env.currentChar?.avatar || characters[0]?.avatar || '';
+        const bindings = env.settings.characterPresetBindings;
+        const role = bindings[editingAvatar];
+        const { preset: name, apiId, unavailable } = getRolePresetStatus(role, env);
+        const editor = characters.length ? `<div class="lk-settings-card" id="lk-role-editor">
             <label for="lk-role-avatar">角色卡</label>
             <select id="lk-role-avatar" class="text_pole lk-select">
                 ${characters.map(c => `<option value="${esc(c.avatar)}" ${c.avatar === editingAvatar ? 'selected' : ''}>${esc(c.name || c.avatar)}</option>`).join('')}
@@ -287,14 +299,14 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 label: name ? '当前默认预设' : '未绑定角色预设',
                 preset: name,
                 unavailable,
-                apiId: role?.apiId,
+                apiId,
                 books: unavailable ? [] : getLorebooksForPreset(env.settings, name),
                 allLorebooks: env.allLorebooks,
             })}
             <label for="lk-role-preset">角色默认预设</label>
             <select id="lk-role-preset" class="text_pole lk-select">
                 <option value="">选择预设</option>
-                ${env.allPresets.map(p => `<option value="${esc(p)}" ${p === name && (!role?.apiId || role.apiId === env.pm.apiId) ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+                ${env.allPresets.map(p => `<option value="${esc(p)}" ${p === name && !unavailable ? 'selected' : ''}>${esc(p)}</option>`).join('')}
             </select>
             <div class="lk-composer-footer">
                 <div class="lk-composer-btns">
@@ -302,7 +314,55 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     <button type="button" class="menu_button lk-btn lk-btn-primary" data-action="save-role">保存角色绑定</button>
                 </div>
             </div>
-        </div>`;
+        </div>` : '<p class="lk-empty-inline">请先导入角色卡。</p>';
+
+        const savedBindings = Object.entries(bindings);
+        const cards = savedBindings.map(([avatar, binding]) => {
+            const character = charactersByAvatar.get(avatar);
+            const roleName = character?.name || avatar;
+            const avatarUrl = character && avatar !== 'none'
+                ? ctx.getThumbnailUrl?.('avatar', avatar) || `/thumbnail?type=avatar&file=${encodeURIComponent(avatar)}`
+                : 'img/ai4.png';
+            const status = getRolePresetStatus(binding, env);
+            return `
+                <div class="lk-rule-card">
+                    <div class="lk-role-binding-identity">
+                        <div class="avatar lk-role-binding-avatar">
+                            <img src="${esc(avatarUrl)}" alt="" loading="lazy" />
+                        </div>
+                        <div class="lk-rule-content">
+                            <div class="lk-rule-title-row">
+                                <span class="lk-rule-custom-name" title="${esc(roleName)}">${esc(roleName)}</span>
+                                ${character ? '' : '<span class="lk-mini-tag is-warn">角色未找到</span>'}
+                            </div>
+                            <div class="lk-rule-main lk-binding-status">
+                                ${status.preset ? renderPresetTag(status.preset, status) : '<span class="lk-muted-hint">未找到预设</span>'}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="lk-rule-actions">
+                        <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-secondary" data-action="edit-role" data-avatar="${esc(avatar)}" ${character ? '' : 'disabled'}>
+                            <i class="fa-solid fa-pen" aria-hidden="true"></i><span>编辑</span>
+                        </button>
+                        <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-danger-ghost" data-action="delete-role" data-avatar="${esc(avatar)}" title="删除角色绑定" aria-label="删除 ${esc(roleName)} 的绑定">
+                            <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>`;
+        }).join('');
+
+        return `
+            <div class="lk-section">
+                ${editor}
+                <div class="lk-list-section">
+                    <div class="lk-list-header">
+                        <div class="lk-list-title">已保存的绑定关系 <span>(${savedBindings.length})</span></div>
+                    </div>
+                    <div class="lk-rule-list">
+                        ${cards || '<div class="lk-empty-inline">还没有角色与预设绑定。</div>'}
+                    </div>
+                </div>
+            </div>`;
     };
 
     const renderChatTab = (env) => {
@@ -1268,16 +1328,52 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 break;
             }
 
+            case 'edit-role': {
+                const avatar = actionEl.dataset.avatar;
+                if (!getStContext()?.characters?.some(character => character?.avatar === avatar)) return;
+                editingAvatar = avatar;
+                renderAll();
+                backdrop.querySelector('#lk-role-editor')?.scrollIntoView({ block: 'start' });
+                backdrop.querySelector('#lk-role-preset')?.focus({ preventScroll: true });
+                break;
+            }
+
             case 'save-role':
-            case 'clear-role': {
+            case 'clear-role':
+            case 'delete-role': {
+                const avatar = action === 'delete-role' ? actionEl.dataset.avatar : editingAvatar;
+                if (action === 'delete-role') {
+                    const character = getStContext()?.characters?.find(entry => entry?.avatar === avatar);
+                    const { choice } = await openSubDialog({
+                        title: '删除角色绑定',
+                        bodyHtml: `<p class="lk-sub-text">确定要移除 <b>「${esc(character?.name || avatar)}」</b> 的预设绑定吗？</p>`,
+                        buttons: [
+                            { key: 'cancel', label: '取消', variant: 'ghost' },
+                            { key: 'delete', label: '确认删除', variant: 'danger', icon: 'fa-solid fa-trash-can' },
+                        ],
+                    });
+                    if (choice !== 'delete') return;
+                }
+                const selectedAvatar = editingAvatar;
                 const rolePreset = backdrop.querySelector('#lk-role-preset')?.value;
                 const settings = loadSettings();
-                if (actionEl.dataset.action === 'clear-role') delete settings.characterPresetBindings[editingAvatar];
-                else if (rolePreset) settings.characterPresetBindings[editingAvatar] = { apiId: getActivePresetManager().apiId, preset: rolePreset };
-                else { toastr.warning('请先选择角色预设'); return; }
+                if (action === 'save-role') {
+                    if (!rolePreset) {
+                        toastr.warning('请先选择角色预设');
+                        return;
+                    }
+                    settings.characterPresetBindings[avatar] = { apiId: getActivePresetManager().apiId, preset: rolePreset };
+                } else {
+                    if (!Object.hasOwn(settings.characterPresetBindings, avatar)) return;
+                    delete settings.characterPresetBindings[avatar];
+                }
                 saveSettings(settings);
                 await applyCurrentChatBinding();
                 renderAll();
+                if (action === 'delete-role' && avatar !== selectedAvatar && selectedAvatar === editingAvatar) {
+                    const presetSelect = backdrop.querySelector('#lk-role-preset');
+                    if (presetSelect && rolePreset !== undefined) presetSelect.value = rolePreset;
+                }
                 break;
             }
             case 'save-chat-binding':

@@ -1032,6 +1032,18 @@ body.no-blur .lk-sub-card {
     min-width: 0;
 }
 
+.lk-role-binding-identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.lk-role-binding-identity .lk-role-binding-avatar {
+    flex: 0 0 auto;
+}
+
 .lk-rule-title-row {
     display: inline-flex;
     align-items: center;
