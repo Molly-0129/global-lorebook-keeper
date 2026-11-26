@@ -1,4 +1,4 @@
-// Global Lorebook Keeper for Entity - v1.2
+// Global Lorebook Keeper - v1.2
 // Original author: sleepyfish
 // Enhanced with multi-preset binding groups, smart preset update inheritance & modernized UI
 

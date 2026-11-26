@@ -26,7 +26,7 @@ const TRAILING_BRACKET_VER_RE = /\s*[\[【（(]\s*(?:v?\d+(?:\.\d+)*[a-z]?|20\d{
 const INLINE_EXPLICIT_VER_RE = /(?:^|[\s\-_—·.|/])(?:v|ver\.?)\s*\d+(?:\.\d+)*[a-z]?(?=$|[\s\-_—·.|/\u4e00-\u9fa5])/gi;
 
 /**
- * Extracts a normalized signature from a preset name so `恶灵低语 v1.1` and `恶灵低语 v1.2 (正式版)`
+ * Extracts a normalized signature from a preset name so `主力预设 v1.1` and `主力预设 v1.2 (正式版)`
  * resolve to the same `coreKey`.
  * @param {string} rawName
  */

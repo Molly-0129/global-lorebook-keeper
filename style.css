@@ -1419,8 +1419,15 @@ body.no-blur .lk-sub-card {
     }
 
     .lk-tabs {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: 10px;
+        padding-right: 10px;
+        gap: 2px;
+    }
+
+    .lk-tab {
+        padding: 7px 8px 9px;
+        font-size: 0.85em;
+        gap: 4px;
     }
 
     .lk-two-col,
@@ -1431,6 +1438,14 @@ body.no-blur .lk-sub-card {
     .lk-meta-row {
         flex-direction: column;
         align-items: stretch;
+        gap: 10px;
+    }
+
+    .lk-meta-name-col,
+    .lk-meta-color-col {
+        flex: 0 0 auto;
+        width: 100%;
+        min-width: 0;
     }
 
     .lk-color-picker {

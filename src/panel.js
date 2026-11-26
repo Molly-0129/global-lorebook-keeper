@@ -687,7 +687,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     <div class="lk-meta-row">
                         <div class="lk-meta-name-col">
                             <label class="lk-meta-label" for="lk-group-name-input">绑定名称<span>（选填）</span></label>
-                            <input type="text" id="lk-group-name-input" class="text_pole lk-input" maxlength="40" placeholder="例如：恶灵主力世界观 / 现代日常组..." value="${esc(state.groupName)}" />
+                            <input type="text" id="lk-group-name-input" class="text_pole lk-input" maxlength="40" placeholder="例如：长篇世界观组 / 现代日常包..." value="${esc(state.groupName)}" />
                         </div>
                         <div class="lk-meta-color-col">
                             <div class="lk-meta-label">颜色标记<span>（7 色可选）</span></div>
