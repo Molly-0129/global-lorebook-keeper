@@ -54,21 +54,6 @@ export function uniqueStrings(arr) {
 }
 
 /**
- * Rebuilds legacy `presetLorebookBindings` map from `bindingGroups` so legacy format stays in sync.
- */
-function buildLegacyMapFromGroups(groups) {
-    const map = {};
-    for (const grp of groups) {
-        const books = uniqueStrings(grp.lorebooks);
-        if (!books.length) continue;
-        for (const preset of uniqueStrings(grp.presets)) {
-            map[preset] = [...books];
-        }
-    }
-    return map;
-}
-
-/**
  * Loads and normalizes plugin settings, migrating v1 `presetLorebookBindings` seamlessly if needed.
  */
 export function loadSettings() {
@@ -115,7 +100,7 @@ export function loadSettings() {
                 updatedAt: Number(g.updatedAt) || Date.now(),
             });
         }
-    } else if (raw.presetLorebookBindings && typeof raw.presetLorebookBindings === 'object') {
+    } else if (!Object.hasOwn(raw, 'bindingGroups') && raw.presetLorebookBindings && typeof raw.presetLorebookBindings === 'object' && !Array.isArray(raw.presetLorebookBindings)) {
         migrated = true;
         for (const [preset, booksRaw] of Object.entries(raw.presetLorebookBindings)) {
             const presetName = String(preset || '').trim();
@@ -138,12 +123,15 @@ export function loadSettings() {
         version: 2,
         options,
         bindingGroups,
-        presetLorebookBindings: buildLegacyMapFromGroups(bindingGroups),
+
         characterPresetBindings,
         ignoredUpdatePresets,
     };
 
-    if (migrated || raw.version !== 2) {
+    const malformedGroups = (Object.hasOwn(raw, 'bindingGroups') && !Array.isArray(raw.bindingGroups))
+        || (Object.hasOwn(raw, 'presetLorebookBindings') && !Array.isArray(raw.bindingGroups)
+            && (!raw.presetLorebookBindings || typeof raw.presetLorebookBindings !== 'object' || Array.isArray(raw.presetLorebookBindings)));
+    if (!malformedGroups && (migrated || raw.version !== 2 || Object.hasOwn(raw, 'presetLorebookBindings'))) {
         root[EXTENSION_STORAGE_NAME][EXTENSION_SETTINGS_KEY] = normalized;
         getStContext()?.saveSettingsDebounced?.();
     }
@@ -152,7 +140,7 @@ export function loadSettings() {
 }
 
 /**
- * Persists plugin settings and keeps legacy compatibility map synchronized.
+ * Persists the canonical binding groups and plugin options.
  */
 export function saveSettings(data) {
     const root = getExtensionSettingsRoot();
@@ -187,7 +175,7 @@ export function saveSettings(data) {
             ...(data.options || {}),
         },
         bindingGroups: cleanGroups,
-        presetLorebookBindings: buildLegacyMapFromGroups(cleanGroups),
+
         characterPresetBindings: { ...(data.characterPresetBindings || {}) },
         ignoredUpdatePresets: uniqueStrings(data.ignoredUpdatePresets),
     };
