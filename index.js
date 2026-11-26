@@ -1,4 +1,4 @@
-// Global Lorebook Keeper - v1.4
+// Global Lorebook Keeper - v1.5
 // Original author: sleepyfish
 // Enhanced with multi-preset binding groups, smart preset update inheritance & modernized UI
 
@@ -15,6 +15,7 @@ import {
     markPresetImportActivity,
     snapshotInitialPresets,
 } from './src/core.js';
+import { createCaptureControls } from './src/capture.js';
 import { installPromptOverrides } from './src/chat.js';
 import { mountExtensionEntries } from './src/panel.js';
 import { registerStEnv } from './src/st-env.js';
@@ -36,7 +37,10 @@ $(document).ready(function () {
     snapshotInitialPresets();
 
     const reportError = error => console.error(`[${EXTENSION_DISPLAY_NAME}] 聊天绑定应用失败`, error);
+    const capture = createCaptureControls(() => promptManager, applyCurrentChatBinding);
     const applyChat = () => {
+        capture.mount();
+        capture.stopIfChanged();
         installPromptOverrides(promptManager);
         return applyCurrentChatBinding().catch(reportError);
     };
@@ -50,6 +54,8 @@ $(document).ready(function () {
         return applyChat();
     });
     if (eventTypes?.MAIN_API_CHANGED) eventSource.on(eventTypes.MAIN_API_CHANGED, applyChat);
+    if (eventTypes?.OAI_PRESET_CHANGED_BEFORE) eventSource.on(eventTypes.OAI_PRESET_CHANGED_BEFORE, capture.stop);
+    if (eventTypes?.CHARACTER_DELETED) eventSource.on(eventTypes.CHARACTER_DELETED, capture.stop);
     if (eventTypes?.OAI_PRESET_IMPORT_READY) eventSource.on(eventTypes.OAI_PRESET_IMPORT_READY, markPresetImportActivity);
     if (eventTypes?.CHARACTER_RENAMED) eventSource.on(eventTypes.CHARACTER_RENAMED, handleCharacterRenamed);
     if (eventTypes?.PRESET_RENAMED) eventSource.on(eventTypes.PRESET_RENAMED, handlePresetRenamed);

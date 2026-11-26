@@ -10,7 +10,9 @@ const patchedManagers = new WeakSet();
 export function currentChat() {
     const ctx = getStContext();
     if (!ctx?.chatId || !ctx.chatMetadata) return null;
-    const owner = ctx.groupId ? ['group', ctx.groupId] : ['character', ctx.characters?.[ctx.characterId]?.avatar];
+    const avatar = ctx.groupId ? undefined : getCurrentCharacter()?.avatar;
+    if (ctx.groupId == null && !avatar) return null;
+    const owner = ctx.groupId != null ? ['group', ctx.groupId] : ['character', avatar];
     return { ctx, key: JSON.stringify([...owner, ctx.chatId]), name: String(ctx.chatId) };
 }
 
