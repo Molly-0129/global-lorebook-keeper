@@ -1,0 +1,282 @@
+// Storage & v1 -> v2 seamless data migration for Global Lorebook Keeper
+
+import { getExtensionSettingsRoot, getStContext } from './st-env.js';
+
+export const EXTENSION_DISPLAY_NAME = '角色-预设-世界书绑定器';
+export const EXTENSION_STORAGE_NAME = '角色-预设-世界书绑定器';
+export const EXTENSION_SETTINGS_KEY = 'presetBinderSettings';
+
+export const DEFAULT_OPTIONS = {
+    autoBindPresetUpdate: false,   // 默认关闭自动绑定，由用户手动开启
+    promptOnPresetUpdate: true,    // 默认开启新版预设识别弹窗提醒
+    syncCharPresetOnUpdate: false, // 继承新版预设时是否默认同步更新角色绑定
+    notifyOnSwitch: true,          // 切换预设/角色联动时显示右上角状态提醒
+};
+
+function makeGroupId() {
+    return `bg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function uniqueStrings(arr) {
+    if (!Array.isArray(arr)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const item of arr) {
+        const s = typeof item === 'string' ? item.trim() : '';
+        if (s && !seen.has(s)) {
+            seen.add(s);
+            out.push(s);
+        }
+    }
+    return out;
+}
+
+/**
+ * Rebuilds legacy `presetLorebookBindings` map from `bindingGroups` so legacy format stays in sync.
+ */
+function buildLegacyMapFromGroups(groups) {
+    const map = {};
+    for (const grp of groups) {
+        const books = uniqueStrings(grp.lorebooks);
+        if (!books.length) continue;
+        for (const preset of uniqueStrings(grp.presets)) {
+            map[preset] = [...books];
+        }
+    }
+    return map;
+}
+
+/**
+ * Loads and normalizes plugin settings, migrating v1 `presetLorebookBindings` seamlessly if needed.
+ */
+export function loadSettings() {
+    const root = getExtensionSettingsRoot();
+    if (!root[EXTENSION_STORAGE_NAME]) {
+        root[EXTENSION_STORAGE_NAME] = {};
+    }
+
+    const raw = root[EXTENSION_STORAGE_NAME][EXTENSION_SETTINGS_KEY] ?? {};
+    const options = {
+        ...DEFAULT_OPTIONS,
+        ...(raw.options && typeof raw.options === 'object' ? raw.options : {}),
+    };
+
+    const characterPresetBindings = {};
+    if (raw.characterPresetBindings && typeof raw.characterPresetBindings === 'object') {
+        for (const [avatar, preset] of Object.entries(raw.characterPresetBindings)) {
+            if (avatar && typeof preset === 'string' && preset.trim()) {
+                characterPresetBindings[avatar] = preset.trim();
+            }
+        }
+    }
+
+    const bindingGroups = [];
+    let migrated = false;
+
+    if (Array.isArray(raw.bindingGroups)) {
+        const claimedPresets = new Set();
+        for (const g of raw.bindingGroups) {
+            if (!g || typeof g !== 'object') continue;
+            const presets = uniqueStrings(g.presets).filter((p) => {
+                if (claimedPresets.has(p)) return false;
+                claimedPresets.add(p);
+                return true;
+            });
+            const lorebooks = uniqueStrings(g.lorebooks);
+            if (!presets.length || !lorebooks.length) continue;
+            bindingGroups.push({
+                id: typeof g.id === 'string' && g.id ? g.id : makeGroupId(),
+                name: typeof g.name === 'string' ? g.name.trim() : '',
+                presets,
+                lorebooks,
+                updatedAt: Number(g.updatedAt) || Date.now(),
+            });
+        }
+    } else if (raw.presetLorebookBindings && typeof raw.presetLorebookBindings === 'object') {
+        migrated = true;
+        for (const [preset, booksRaw] of Object.entries(raw.presetLorebookBindings)) {
+            const presetName = String(preset || '').trim();
+            const books = uniqueStrings(Array.isArray(booksRaw) ? booksRaw : [booksRaw]);
+            if (!presetName || !books.length) continue;
+            bindingGroups.push({
+                id: makeGroupId(),
+                name: '',
+                presets: [presetName],
+                lorebooks: books,
+                updatedAt: Date.now(),
+            });
+        }
+    }
+
+    const ignoredUpdatePresets = uniqueStrings(raw.ignoredUpdatePresets);
+
+    const normalized = {
+        version: 2,
+        options,
+        bindingGroups,
+        presetLorebookBindings: buildLegacyMapFromGroups(bindingGroups),
+        characterPresetBindings,
+        ignoredUpdatePresets,
+    };
+
+    if (migrated || raw.version !== 2) {
+        root[EXTENSION_STORAGE_NAME][EXTENSION_SETTINGS_KEY] = normalized;
+        getStContext()?.saveSettingsDebounced?.();
+    }
+
+    return normalized;
+}
+
+/**
+ * Persists plugin settings and keeps legacy compatibility map synchronized.
+ */
+export function saveSettings(data) {
+    const root = getExtensionSettingsRoot();
+    if (!root[EXTENSION_STORAGE_NAME]) {
+        root[EXTENSION_STORAGE_NAME] = {};
+    }
+
+    const claimedPresets = new Set();
+    const cleanGroups = [];
+    for (const g of Array.isArray(data.bindingGroups) ? data.bindingGroups : []) {
+        const presets = uniqueStrings(g.presets).filter((p) => {
+            if (claimedPresets.has(p)) return false;
+            claimedPresets.add(p);
+            return true;
+        });
+        const lorebooks = uniqueStrings(g.lorebooks);
+        if (!presets.length || !lorebooks.length) continue;
+        cleanGroups.push({
+            id: g.id || makeGroupId(),
+            name: typeof g.name === 'string' ? g.name.trim() : '',
+            presets,
+            lorebooks,
+            updatedAt: Number(g.updatedAt) || Date.now(),
+        });
+    }
+
+    const payload = {
+        version: 2,
+        options: {
+            ...DEFAULT_OPTIONS,
+            ...(data.options || {}),
+        },
+        bindingGroups: cleanGroups,
+        presetLorebookBindings: buildLegacyMapFromGroups(cleanGroups),
+        characterPresetBindings: { ...(data.characterPresetBindings || {}) },
+        ignoredUpdatePresets: uniqueStrings(data.ignoredUpdatePresets),
+    };
+
+    root[EXTENSION_STORAGE_NAME][EXTENSION_SETTINGS_KEY] = payload;
+    getStContext()?.saveSettingsDebounced?.();
+    return payload;
+}
+
+export function findGroupByPreset(settings, presetName) {
+    if (!presetName) return null;
+    return settings.bindingGroups.find(g => g.presets.includes(presetName)) || null;
+}
+
+export function getLorebooksForPreset(settings, presetName) {
+    const grp = findGroupByPreset(settings, presetName);
+    return grp ? [...grp.lorebooks] : [];
+}
+
+export function upsertBindingGroup({ groupId = null, name = '', presets = [], lorebooks = [] }) {
+    const settings = loadSettings();
+    const cleanPresets = uniqueStrings(presets);
+    const cleanLorebooks = uniqueStrings(lorebooks);
+    const movedPresets = [];
+
+    const remainingGroups = [];
+    let targetGroup = null;
+
+    for (const grp of settings.bindingGroups) {
+        if (groupId && grp.id === groupId) {
+            targetGroup = grp;
+            remainingGroups.push(grp);
+            continue;
+        }
+        const overlap = grp.presets.filter(p => cleanPresets.includes(p));
+        if (overlap.length > 0) {
+            movedPresets.push(...overlap);
+            const filtered = grp.presets.filter(p => !cleanPresets.includes(p));
+            if (filtered.length > 0) {
+                remainingGroups.push({
+                    ...grp,
+                    presets: filtered,
+                    updatedAt: Date.now(),
+                });
+            }
+        } else {
+            remainingGroups.push(grp);
+        }
+    }
+
+    let savedGroup;
+    if (targetGroup) {
+        targetGroup.name = String(name || '').trim();
+        targetGroup.presets = cleanPresets;
+        targetGroup.lorebooks = cleanLorebooks;
+        targetGroup.updatedAt = Date.now();
+        savedGroup = targetGroup;
+    } else {
+        savedGroup = {
+            id: makeGroupId(),
+            name: String(name || '').trim(),
+            presets: cleanPresets,
+            lorebooks: cleanLorebooks,
+            updatedAt: Date.now(),
+        };
+        remainingGroups.unshift(savedGroup);
+    }
+
+    settings.bindingGroups = remainingGroups;
+    settings.ignoredUpdatePresets = settings.ignoredUpdatePresets.filter(p => !cleanPresets.includes(p));
+
+    const next = saveSettings(settings);
+    return {
+        settings: next,
+        group: next.bindingGroups.find(g => g.id === savedGroup.id) || savedGroup,
+        movedPresets: uniqueStrings(movedPresets),
+    };
+}
+
+export function attachPresetToGroup(groupId, newPresetName, { replaceOldPresetInChars = false } = {}) {
+    const settings = loadSettings();
+    const grp = settings.bindingGroups.find(g => g.id === groupId);
+    if (!grp || !newPresetName) return { updated: false, updatedCharCount: 0, settings };
+
+    const oldPresetsSnapshot = [...grp.presets];
+    if (!grp.presets.includes(newPresetName)) {
+        grp.presets.push(newPresetName);
+        grp.updatedAt = Date.now();
+    }
+
+    let updatedCharCount = 0;
+    if (replaceOldPresetInChars) {
+        for (const [avatar, boundPreset] of Object.entries(settings.characterPresetBindings)) {
+            if (oldPresetsSnapshot.includes(boundPreset) && boundPreset !== newPresetName) {
+                settings.characterPresetBindings[avatar] = newPresetName;
+                updatedCharCount++;
+            }
+        }
+    }
+
+    settings.ignoredUpdatePresets = settings.ignoredUpdatePresets.filter(p => p !== newPresetName);
+    const next = saveSettings(settings);
+    return {
+        updated: true,
+        updatedCharCount,
+        group: next.bindingGroups.find(g => g.id === groupId) || grp,
+        settings: next,
+    };
+}
+
+export function deleteBindingGroup(groupId) {
+    const settings = loadSettings();
+    const target = settings.bindingGroups.find(g => g.id === groupId) || null;
+    settings.bindingGroups = settings.bindingGroups.filter(g => g.id !== groupId);
+    const next = saveSettings(settings);
+    return { removedGroup: target, settings: next };
+}
