@@ -12,7 +12,7 @@ import {
     promptUnsavedChanges,
     shieldDialogEvents,
 } from './dialog.js';
-import { currentChat, listPresetPrompts, readChatBinding, saveChatBinding } from './chat.js';
+import { currentChat, listPresetPrompts, readChatBinding, resolvePreset, saveChatBinding } from './chat.js';
 import { scanAllUnboundPresetUpdates } from './matcher.js';
 import {
     getActivePresetManager,
@@ -128,7 +128,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
     const loadChatDraft = (chat = currentChat()) => {
         draftChat = chat;
-        draft = { preset: '', apiId: '', prompts: {}, lorebooks: [], ...readChatBinding(chat) };
+        draft = { mode: 'inherit', preset: '', apiId: '', prompts: {}, lorebooks: [], ...readChatBinding(chat) };
         savedDraft = JSON.stringify(draft);
     };
     loadChatDraft();
@@ -138,13 +138,17 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
     const saveChatDraft = async (binding = draft) => {
         if (savingChat || !draftChat) return false;
+        if (binding.mode === 'preset' && !binding.preset) {
+            toastr.warning('请先选择聊天预设');
+            return false;
+        }
         savingChat = true;
         try {
             await saveChatBinding(draftChat, binding);
             loadChatDraft();
             await applyCurrentChatBinding();
             renderAll();
-            toastr.success(binding.preset || binding.lorebooks?.length ? '已保存聊天绑定' : '已解除聊天绑定');
+            toastr.success(binding.mode || binding.preset || binding.lorebooks?.length ? '已保存聊天绑定' : '已解除聊天绑定');
             return true;
         } catch (error) {
             toastr.error(error.message || '保存聊天绑定失败');
@@ -154,23 +158,54 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
     };
 
+    let editingAvatar = '';
+    const renderRoleTab = (env) => {
+        const characters = getStContext()?.characters?.filter(c => c?.avatar) || [];
+        if (!characters.length) return '<p class="lk-empty-inline">请先导入角色卡。</p>';
+        if (!characters.some(c => c.avatar === editingAvatar)) editingAvatar = env.currentChar?.avatar || characters[0].avatar;
+        const role = env.settings.characterPresetBindings[editingAvatar];
+        const name = typeof role === 'string' ? role : role?.preset;
+        return `<div class="lk-settings-card">
+            <label for="lk-role-avatar">角色卡</label>
+            <select id="lk-role-avatar" class="text_pole lk-select">
+                ${characters.map(c => `<option value="${esc(c.avatar)}" ${c.avatar === editingAvatar ? 'selected' : ''}>${esc(c.name || c.avatar)}</option>`).join('')}
+            </select>
+            <p>当前默认预设：${esc(name || '未绑定')}${role?.apiId ? ' · ' + esc(role.apiId) : ''}</p>
+            <label for="lk-role-preset">角色默认预设</label>
+            <select id="lk-role-preset" class="text_pole lk-select">
+                <option value="">选择预设</option>
+                ${env.allPresets.map(p => `<option value="${esc(p)}" ${p === name && (!role?.apiId || role.apiId === env.pm.apiId) ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+            </select>
+            <button type="button" class="menu_button" data-action="save-role">保存角色绑定</button>
+            <button type="button" class="menu_button" data-action="clear-role" ${role ? '' : 'disabled'}>解除角色绑定</button>
+        </div>`;
+    };
+
     const renderChatTab = (env) => {
         const chat = currentChat();
         if (!chat) return '<p class="lk-empty-inline">请先打开一条聊天。</p>';
         const apiId = env.pm?.apiId;
-        const missingPreset = draft.preset && (!env.allPresets.includes(draft.preset) || draft.apiId !== apiId);
+        const missingPreset = draft.mode === 'preset' && draft.preset && (!env.allPresets.includes(draft.preset) || draft.apiId !== apiId);
         const presetOptions = [...(missingPreset ? [draft.preset] : []), ...env.allPresets.filter(preset => !missingPreset || preset !== draft.preset)];
-        const prompts = draft.apiId === apiId ? listPresetPrompts(env.pm, draft.preset) : [];
-        const missingPrompts = !missingPreset && Object.keys(draft.prompts).filter(id => !prompts.some(prompt => prompt.identifier === id));
+        const targetPreset = resolvePreset(draft, apiId, env.settings);
+        const prompts = listPresetPrompts(env.pm, targetPreset);
+        const scoped = draft.preset === targetPreset && draft.apiId === apiId ? draft.prompts : {};
+        const missingPrompts = !missingPreset && Object.keys(scoped).filter(id => !prompts.some(prompt => prompt.identifier === id));
         const allBooks = uniqueStrings([...draft.lorebooks, ...env.allLorebooks]);
         return `
             <div class="lk-settings-card">
                 <h3>当前聊天 <span>${esc(chat.name)}</span></h3>
-                <label for="lk-chat-preset">聊天预设</label>
-                <select class="text_pole lk-select" id="lk-chat-preset">
-                    <option value="">沿用当前预设</option>
-                    ${presetOptions.map(preset => `<option value="${esc(preset)}" ${preset === draft.preset ? 'selected' : ''}>${esc(preset)}${missingPreset && preset === draft.preset ? '（当前不可用）' : ''}</option>`).join('')}
+                <label for="lk-chat-mode">预设来源</label>
+                <select class="text_pole lk-select" id="lk-chat-mode">
+                    <option value="inherit" ${draft.mode === 'inherit' ? 'selected' : ''}>继承角色默认${draft.mode === 'inherit' && targetPreset ? ' · ' + esc(targetPreset) : ''}</option>
+                    <option value="preset" ${draft.mode === 'preset' ? 'selected' : ''}>指定聊天预设</option>
+                    <option value="manual" ${draft.mode === 'manual' ? 'selected' : ''}>使用手动预设</option>
                 </select>
+                ${draft.mode === 'preset' ? `<label for="lk-chat-preset">聊天预设</label>
+                <select class="text_pole lk-select" id="lk-chat-preset">
+                    <option value="">请选择预设</option>
+                    ${presetOptions.map(preset => `<option value="${esc(preset)}" ${preset === draft.preset ? 'selected' : ''}>${esc(preset)}${missingPreset && preset === draft.preset ? '（当前不可用）' : ''}</option>`).join('')}
+                </select>` : ''}
                 ${missingPreset ? '<p>请选择当前 API 可用的预设。</p>' : ''}
                 ${missingPrompts?.length ? `<p>找不到条目 ${esc(missingPrompts.join('、'))}。保存时会移除这些条目的覆盖。</p>` : ''}
                 ${prompts.length ? '<h4>提示词条目</h4>' : ''}
@@ -179,8 +214,8 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         <span>${esc(prompt.name || prompt.identifier)}</span>
                         <select class="text_pole" data-chat-prompt="${esc(prompt.identifier)}">
                             <option value="">沿用预设</option>
-                            <option value="on" ${draft.prompts[prompt.identifier] === true ? 'selected' : ''}>开启</option>
-                            <option value="off" ${draft.prompts[prompt.identifier] === false ? 'selected' : ''}>关闭</option>
+                            <option value="on" ${scoped[prompt.identifier] === true ? 'selected' : ''}>开启</option>
+                            <option value="off" ${scoped[prompt.identifier] === false ? 'selected' : ''}>关闭</option>
                         </select>
                     </label>`).join('')}
                 <h4>额外启用的全局世界书</h4>
@@ -197,10 +232,12 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
     const getDraftToSave = () => {
         const pm = getActivePresetManager();
-        const ids = new Set(listPresetPrompts(pm, draft.preset).map(prompt => prompt.identifier));
+        const target = resolvePreset(draft, pm?.apiId);
+        const ids = new Set(listPresetPrompts(pm, target).map(prompt => prompt.identifier));
         return {
             ...draft,
-            prompts: Object.fromEntries(Object.entries(draft.prompts).filter(([id]) => ids.has(id))),
+            prompts: draft.preset === target && draft.apiId === pm?.apiId
+                ? Object.fromEntries(Object.entries(draft.prompts).filter(([id]) => ids.has(id))) : {},
         };
     };
 
@@ -410,6 +447,9 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 <i class="fa-solid fa-book-bookmark"></i>
                 <span>预设 ↔ 世界书</span>
                 <span class="lk-tab-count">${plCount}</span>
+            </button>
+            <button type="button" role="tab" class="lk-tab ${state.activeTab === 'role-binding' ? 'is-active' : ''}" data-tab="role-binding">
+                <i class="fa-solid fa-user-tag"></i><span>角色 ↔ 预设</span>
             </button>
             <button type="button" role="tab" class="lk-tab ${state.activeTab === 'chat-binding' ? 'is-active' : ''}" data-tab="chat-binding">
                 <i class="fa-solid fa-comments"></i>
@@ -854,6 +894,8 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
         if (state.activeTab === 'preset-lorebook') {
             body.innerHTML = renderPresetLorebookTab(env);
+        } else if (state.activeTab === 'role-binding') {
+            body.innerHTML = renderRoleTab(env);
         } else if (state.activeTab === 'chat-binding') {
             body.innerHTML = renderChatTab(env);
         } else {
@@ -1143,6 +1185,18 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 break;
             }
 
+            case 'save-role':
+            case 'clear-role': {
+                const rolePreset = backdrop.querySelector('#lk-role-preset')?.value;
+                const settings = loadSettings();
+                if (actionEl.dataset.action === 'clear-role') delete settings.characterPresetBindings[editingAvatar];
+                else if (rolePreset) settings.characterPresetBindings[editingAvatar] = { apiId: getActivePresetManager().apiId, preset: rolePreset };
+                else { toastr.warning('请先选择角色预设'); return; }
+                saveSettings(settings);
+                await applyCurrentChatBinding();
+                renderAll();
+                break;
+            }
             case 'save-chat-binding':
                 await saveChatDraft(getDraftToSave());
                 break;
@@ -1290,6 +1344,19 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
 
 
+        if (t.id === 'lk-role-avatar') {
+            editingAvatar = t.value;
+            renderAll();
+            return;
+        }
+        if (t.id === 'lk-chat-mode') {
+            draft.mode = t.value;
+            draft.preset = t.value === 'preset' ? getCurrentPresetName() : '';
+            draft.apiId = draft.preset ? getActivePresetManager()?.apiId : '';
+            draft.prompts = {};
+            renderAll();
+            return;
+        }
         if (t.id === 'lk-chat-preset') {
             draft.preset = t.value;
             draft.apiId = t.value ? getActivePresetManager()?.apiId || '' : '';
@@ -1298,6 +1365,11 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             return;
         }
         if (t.dataset.chatPrompt) {
+            const apiId = getActivePresetManager()?.apiId;
+            const target = resolvePreset(draft, apiId);
+            if (draft.apiId !== apiId || draft.preset !== target) draft.prompts = {};
+            draft.apiId = apiId;
+            draft.preset = target;
             if (t.value) draft.prompts = { ...draft.prompts, [t.dataset.chatPrompt]: t.value === 'on' };
             else delete draft.prompts[t.dataset.chatPrompt];
             return;

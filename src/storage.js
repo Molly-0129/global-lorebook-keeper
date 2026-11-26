@@ -72,6 +72,8 @@ export function loadSettings() {
         for (const [avatar, preset] of Object.entries(raw.characterPresetBindings)) {
             if (avatar && typeof preset === 'string' && preset.trim()) {
                 characterPresetBindings[avatar] = preset.trim();
+            } else if (avatar && typeof preset?.apiId === 'string' && typeof preset?.preset === 'string' && preset.preset.trim()) {
+                characterPresetBindings[avatar] = { apiId: preset.apiId, preset: preset.preset.trim() };
             }
         }
     }
