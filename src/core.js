@@ -1,13 +1,12 @@
 // Core runtime logic: preset switching, smart version detection, worldbook sync & character preset switching
 
+import { isSwitchingChatPreset, readChatBinding, switchChatPreset } from './chat.js';
 import { promptPresetUpdateDetected } from './dialog.js';
 import { findPresetUpdateMatch } from './matcher.js';
 import {
     getActivePresetManager,
-    getCurrentCharacter,
     getCurrentPresetName,
     getSelectedWorldInfo,
-    getStContext,
     getWorldNames,
 } from './st-env.js';
 import {
@@ -63,8 +62,6 @@ export function applyGlobalLorebookDiff(worldsToDeactivate = [], worldsToActivat
 } = {}) {
     const selectedWorldInfo = getSelectedWorldInfo();
     const worldNames = getWorldNames();
-    const ctx = getStContext();
-
     const activateList = uniqueStrings(worldsToActivate);
     const deactivateList = uniqueStrings(worldsToDeactivate);
 
@@ -100,11 +97,7 @@ export function applyGlobalLorebookDiff(worldsToDeactivate = [], worldsToActivat
             .map(idx => String(idx));
 
         selectedWorldInfo.splice(0, selectedWorldInfo.length, ...finalNames);
-        ctx?.saveSettingsDebounced?.();
         $('#world_info').val(finalIndices).trigger('change');
-        if (ctx?.eventSource && ctx?.eventTypes?.WORLDINFO_SETTINGS_UPDATED) {
-            ctx.eventSource.emit(ctx.eventTypes.WORLDINFO_SETTINGS_UPDATED);
-        }
     }
 
     if (missingBooks.length > 0) {
@@ -131,165 +124,75 @@ export function applyGlobalLorebookDiff(worldsToDeactivate = [], worldsToActivat
     return { changed, activatedValid, missingBooks };
 }
 
-/**
- * Immediately synchronizes global lorebooks if the currently active preset is affected by an edit/save in the panel.
- */
-export function syncActivePresetImmediately({ previousBooksForActivePreset = [] } = {}) {
-    const activePreset = getCurrentPresetName();
-    if (!activePreset) return { isActivePreset: false, changed: false, activatedValid: [], missingBooks: [] };
-
+export function syncActivePresetImmediately({ showToast = false, customToast = '' } = {}) {
+    const preset = getCurrentPresetName();
     const settings = loadSettings();
-    const nextBooks = getLorebooksForPreset(settings, activePreset);
-    const prevBooks = uniqueStrings(previousBooksForActivePreset);
-
-    if (nextBooks.length === 0 && prevBooks.length === 0) {
-        return { isActivePreset: false, changed: false, activatedValid: [], missingBooks: [] };
+    const wanted = uniqueStrings([...getLorebooksForPreset(settings, preset), ...(readChatBinding().lorebooks || [])]);
+    const selected = new Set(getSelectedWorldInfo());
+    const available = new Set(getWorldNames());
+    const owned = settings.appliedLorebooks || [];
+    if (!available.size) {
+        notifyPanelRefresh();
+        return { changed: false, activatedValid: [], missingBooks: [] };
     }
-
-    const res = applyGlobalLorebookDiff(prevBooks, nextBooks, {
-        presetLabel: activePreset,
-        showToast: false,
-    });
-
-    return {
-        isActivePreset: true,
-        ...res,
-    };
+    const nextOwned = wanted.filter(book => available.has(book) && (owned.includes(book) || !selected.has(book)));
+    const ownershipChanged = owned.length !== nextOwned.length || owned.some(book => !nextOwned.includes(book));
+    if (ownershipChanged) {
+        settings.appliedLorebooks = nextOwned;
+        saveSettings(settings);
+    }
+    return applyGlobalLorebookDiff(owned, wanted, { presetLabel: preset, showToast, customToast });
 }
 
-/**
- * Returns character names bound to any preset in the given list.
- */
-function getAffectedCharacterNames(settings, presetNames = []) {
-    const ctx = getStContext();
-    const chars = Array.isArray(ctx?.characters) ? ctx.characters : [];
-    const targetSet = new Set(presetNames);
-    const names = [];
-
-    for (const [avatar, boundPreset] of Object.entries(settings.characterPresetBindings)) {
-        if (targetSet.has(boundPreset)) {
-            const c = chars.find(ch => ch?.avatar === avatar);
-            names.push(c?.name || avatar);
-        }
-    }
-    return names;
+export function applyCurrentChatBinding() {
+    return switchChatPreset(() => syncActivePresetImmediately({ showToast: loadSettings().options.notifyOnSwitch }));
 }
 
-/**
- * Handles `<select data-preset-manager-for>` change events, including overwrite imports and version updates.
- */
+/** Handles manual preset changes and detects updated versions of presets. */
 export async function handlePresetSelectChange(event) {
     const selectElement = event.currentTarget || event.target;
-    const rawFor = String($(selectElement).data('preset-manager-for') || '');
-    const apiId = rawFor.split(',')[0]?.trim() || 'default';
-    const newPresetName = $(selectElement).find('option:selected').text().trim();
-    const oldPresetName = lastPresetForApi[apiId] ?? null;
+    const apiIds = String($(selectElement).data('preset-manager-for') || '').split(',').map(id => id.trim());
+    const apiId = getActivePresetManager()?.apiId;
+    if (!apiId || !apiIds.includes(apiId)) return;
+    const preset = $(selectElement).find('option:selected').text().trim();
+    if (!preset) return;
 
-    if (!newPresetName) return;
+    const previous = lastPresetForApi[apiId];
+    lastPresetForApi[apiId] = preset;
+    if (isSwitchingChatPreset()) return;
 
     const settings = loadSettings();
-    const notify = settings.options.notifyOnSwitch !== false;
-
-    // Same-name preset overwrite check (e.g. re-importing a preset with identical filename)
-    if (newPresetName === oldPresetName) {
-        const justImported = Date.now() - lastImportTimestamp < 6000;
-        if (justImported) {
-            const boundBooks = getLorebooksForPreset(settings, newPresetName);
-            if (boundBooks.length > 0) {
-                lastImportTimestamp = 0;
-                applyGlobalLorebookDiff([], boundBooks, {
-                    presetLabel: newPresetName,
-                    showToast: true,
-                    customToast: `检测到预设「${newPresetName}」覆盖更新，已确保 ${boundBooks.length} 本绑定世界书处于启用状态`,
+    const imported = Date.now() - lastImportTimestamp < 6000;
+    if (preset !== previous || imported) {
+        if (imported) lastImportTimestamp = 0;
+        const match = !findGroupByPreset(settings, preset) && findPresetUpdateMatch(preset, settings.bindingGroups);
+        if (match && settings.options.autoBindPresetUpdate) {
+            attachPresetToGroup(match.group.id, preset);
+        } else if (match && settings.options.promptOnPresetUpdate !== false
+            && !settings.ignoredUpdatePresets.includes(preset) && !activeUpdatePromptPreset) {
+            activeUpdatePromptPreset = preset;
+            try {
+                const decision = await promptPresetUpdateDetected({
+                    newPresetName: preset,
+                    matchedPreset: match.matchedPreset,
+                    groupName: match.group.name,
+                    lorebooks: match.group.lorebooks,
+                    availableWorldNames: getWorldNames(),
                 });
-            }
-        }
-        return;
-    }
-
-    lastPresetForApi[apiId] = newPresetName;
-
-    const oldBooks = getLorebooksForPreset(settings, oldPresetName);
-    let newGroup = findGroupByPreset(settings, newPresetName);
-
-    // If the newly selected preset has no binding, check if it is an updated version of a bound preset
-    if (!newGroup) {
-        const match = findPresetUpdateMatch(newPresetName, settings.bindingGroups);
-
-        if (match) {
-            // Mode 1: Auto-bind toggle is ON -> bind seamlessly without dropping lorebooks
-            if (settings.options.autoBindPresetUpdate) {
-                const attachRes = attachPresetToGroup(match.group.id, newPresetName, {
-                    replaceOldPresetInChars: Boolean(settings.options.syncCharPresetOnUpdate),
-                });
-                newGroup = attachPresetToGroupResultGroup(attachRes, match.group);
-                const charHint = attachRes.updatedCharCount > 0
-                    ? `，并同步了 ${attachRes.updatedCharCount} 个角色的预设绑定`
-                    : '';
-                applyGlobalLorebookDiff(oldBooks, newGroup.lorebooks, {
-                    presetLabel: newPresetName,
-                    showToast: true,
-                    customToast: `已识别新版预设「${newPresetName}」，自动继承「${match.matchedPreset}」的 ${newGroup.lorebooks.length} 本世界书绑定${charHint}`,
-                });
-                return;
-            }
-
-            // Mode 2: Auto-bind is OFF -> prompt user if enabled & not ignored
-            const isIgnored = settings.ignoredUpdatePresets.includes(newPresetName);
-            if (settings.options.promptOnPresetUpdate !== false && !isIgnored && activeUpdatePromptPreset !== newPresetName) {
-                activeUpdatePromptPreset = newPresetName;
-                try {
-                    const affectedCharNames = getAffectedCharacterNames(settings, match.group.presets);
-                    const decision = await promptPresetUpdateDetected({
-                        newPresetName,
-                        matchedPreset: match.matchedPreset,
-                        groupName: match.group.name || '',
-                        lorebooks: match.group.lorebooks,
-                        availableWorldNames: getWorldNames(),
-                        affectedCharNames,
-                        defaultSyncChars: Boolean(settings.options.syncCharPresetOnUpdate),
-                    });
-
-                    if (decision.action === 'bind') {
-                        const attachRes = attachPresetToGroup(match.group.id, newPresetName, {
-                            replaceOldPresetInChars: decision.syncChars,
-                        });
-                        const updatedGrp = attachPresetToGroupResultGroup(attachRes, match.group);
-                        const charHint = attachRes.updatedCharCount > 0
-                            ? `，同时更新了 ${attachRes.updatedCharCount} 个关联角色`
-                            : '';
-                        applyGlobalLorebookDiff(oldBooks, updatedGrp.lorebooks, {
-                            presetLabel: newPresetName,
-                            showToast: true,
-                            customToast: `已将「${newPresetName}」加入绑定关系并启用 ${updatedGrp.lorebooks.length} 本世界书${charHint}`,
-                        });
-                        return;
+                if (decision.action === 'bind') attachPresetToGroup(match.group.id, preset);
+                if (decision.action === 'ignore') {
+                    const fresh = loadSettings();
+                    if (!fresh.ignoredUpdatePresets.includes(preset)) {
+                        fresh.ignoredUpdatePresets.push(preset);
+                        saveSettings(fresh);
                     }
-
-                    if (decision.action === 'ignore') {
-                        const fresh = loadSettings();
-                        if (!fresh.ignoredUpdatePresets.includes(newPresetName)) {
-                            fresh.ignoredUpdatePresets.push(newPresetName);
-                            saveSettings(fresh);
-                        }
-                        toastr.info(`已忽略预设「${newPresetName}」的更新绑定提醒（可在面板设置中恢复）`);
-                    }
-                } finally {
-                    activeUpdatePromptPreset = null;
                 }
+            } finally {
+                activeUpdatePromptPreset = null;
             }
         }
     }
-
-    const newBooks = newGroup ? newGroup.lorebooks : [];
-    applyGlobalLorebookDiff(oldBooks, newBooks, {
-        presetLabel: newPresetName,
-        showToast: notify,
-    });
-}
-
-function attachPresetToGroupResultGroup(attachRes, fallbackGroup) {
-    return attachRes?.group || fallbackGroup;
+    syncActivePresetImmediately({ showToast: settings.options.notifyOnSwitch });
 }
 
 /**
@@ -302,7 +205,6 @@ export function handlePresetRenamed(payload) {
 
     const settings = loadSettings();
     let updatedGroups = 0;
-    let updatedChars = 0;
 
     for (const grp of settings.bindingGroups) {
         const idx = grp.presets.indexOf(oldName);
@@ -314,76 +216,16 @@ export function handlePresetRenamed(payload) {
         }
     }
 
-    for (const [avatar, preset] of Object.entries(settings.characterPresetBindings)) {
-        if (preset === oldName) {
-            settings.characterPresetBindings[avatar] = newName;
-            updatedChars++;
-        }
-    }
-
     for (const key of Object.keys(lastPresetForApi)) {
         if (lastPresetForApi[key] === oldName) {
             lastPresetForApi[key] = newName;
         }
     }
 
-    if (updatedGroups > 0 || updatedChars > 0) {
+    if (updatedGroups > 0) {
         saveSettings(settings);
         toastr.info(`预设已重命名为「${newName}」，绑定关系已自动同步`);
         notifyPanelRefresh();
     }
 }
 
-/**
- * Keeps character-preset bindings synchronized if a character's avatar filename changes on rename.
- */
-export function handleCharacterRenamed(oldAvatar, newAvatar) {
-    const oldKey = String(oldAvatar || '').trim();
-    const newKey = String(newAvatar || '').trim();
-    if (!oldKey || !newKey || oldKey === newKey) return;
-
-    const settings = loadSettings();
-    if (settings.characterPresetBindings[oldKey]) {
-        settings.characterPresetBindings[newKey] = settings.characterPresetBindings[oldKey];
-        delete settings.characterPresetBindings[oldKey];
-        saveSettings(settings);
-        notifyPanelRefresh();
-    }
-}
-
-/**
- * Automatically switches preset when entering a character chat with a bound preset.
- */
-export function applyCharacterPreset() {
-    const character = getCurrentCharacter();
-    if (!character?.avatar) return;
-
-    const settings = loadSettings();
-    const boundPresetName = settings.characterPresetBindings[character.avatar];
-    if (!boundPresetName) return;
-
-    const presetManager = getActivePresetManager();
-    if (!presetManager) return;
-
-    const presetValue = presetManager.findPreset(boundPresetName);
-    if (presetValue !== undefined && presetValue !== null) {
-        if (presetManager.getSelectedPresetName() !== boundPresetName) {
-            presetManager.selectPreset(presetValue);
-            if (settings.options.notifyOnSwitch !== false) {
-                toastr.success(`已为角色「${character.name}」自动切换预设：${boundPresetName}`);
-            }
-        }
-    } else {
-        // Check if there is a newer version of the missing preset in the preset list to give a helpful hint
-        const allPresets = presetManager.getAllPresets?.() || [];
-        const tempGroup = [{ id: '__char_probe__', presets: [boundPresetName], lorebooks: ['__probe__'] }];
-        let hint = '';
-        for (const p of allPresets) {
-            if (findPresetUpdateMatch(p, tempGroup)) {
-                hint = `（检测到近似新版「${p}」，可在绑定器中更新）`;
-                break;
-            }
-        }
-        toastr.warning(`角色「${character.name}」绑定的预设「${boundPresetName}」未找到${hint}`);
-    }
-}

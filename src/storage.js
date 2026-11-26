@@ -31,7 +31,6 @@ function normalizeColorKey(rawColor) {
 export const DEFAULT_OPTIONS = {
     autoBindPresetUpdate: false,   // 默认关闭自动绑定，由用户手动开启
     promptOnPresetUpdate: true,    // 默认开启新版预设识别弹窗提醒
-    syncCharPresetOnUpdate: false, // 继承新版预设时是否默认同步更新角色绑定
     notifyOnSwitch: true,          // 切换预设/角色联动时显示右上角状态提醒
 };
 
@@ -126,6 +125,8 @@ export function loadSettings() {
 
         characterPresetBindings,
         ignoredUpdatePresets,
+        ...(Object.keys(raw.presetBeforeChat || {}).length ? { presetBeforeChat: { ...raw.presetBeforeChat } } : {}),
+        ...(raw.appliedLorebooks?.length ? { appliedLorebooks: uniqueStrings(raw.appliedLorebooks) } : {}),
     };
 
     const malformedGroups = (Object.hasOwn(raw, 'bindingGroups') && !Array.isArray(raw.bindingGroups))
@@ -178,6 +179,8 @@ export function saveSettings(data) {
 
         characterPresetBindings: { ...(data.characterPresetBindings || {}) },
         ignoredUpdatePresets: uniqueStrings(data.ignoredUpdatePresets),
+        ...(Object.keys(data.presetBeforeChat || {}).length ? { presetBeforeChat: { ...data.presetBeforeChat } } : {}),
+        ...(data.appliedLorebooks?.length ? { appliedLorebooks: uniqueStrings(data.appliedLorebooks) } : {}),
     };
 
     root[EXTENSION_STORAGE_NAME][EXTENSION_SETTINGS_KEY] = payload;
@@ -259,32 +262,20 @@ export function upsertBindingGroup({ groupId = null, name = '', color = '', pres
     };
 }
 
-export function attachPresetToGroup(groupId, newPresetName, { replaceOldPresetInChars = false } = {}) {
+export function attachPresetToGroup(groupId, newPresetName) {
     const settings = loadSettings();
     const grp = settings.bindingGroups.find(g => g.id === groupId);
-    if (!grp || !newPresetName) return { updated: false, updatedCharCount: 0, settings };
+    if (!grp || !newPresetName) return { updated: false, settings };
 
-    const oldPresetsSnapshot = [...grp.presets];
     if (!grp.presets.includes(newPresetName)) {
         grp.presets.push(newPresetName);
         grp.updatedAt = Date.now();
-    }
-
-    let updatedCharCount = 0;
-    if (replaceOldPresetInChars) {
-        for (const [avatar, boundPreset] of Object.entries(settings.characterPresetBindings)) {
-            if (oldPresetsSnapshot.includes(boundPreset) && boundPreset !== newPresetName) {
-                settings.characterPresetBindings[avatar] = newPresetName;
-                updatedCharCount++;
-            }
-        }
     }
 
     settings.ignoredUpdatePresets = settings.ignoredUpdatePresets.filter(p => p !== newPresetName);
     const next = saveSettings(settings);
     return {
         updated: true,
-        updatedCharCount,
         group: next.bindingGroups.find(g => g.id === groupId) || grp,
         settings: next,
     };

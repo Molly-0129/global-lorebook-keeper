@@ -1,7 +1,7 @@
 // Modernized Binder Management Panel following SillyTavern native theme variables & controls
 
 import {
-    applyGlobalLorebookDiff,
+    applyCurrentChatBinding,
     setOnStateChangedCallback,
     syncActivePresetImmediately,
 } from './core.js';
@@ -12,6 +12,7 @@ import {
     promptUnsavedChanges,
     shieldDialogEvents,
 } from './dialog.js';
+import { currentChat, listPresetPrompts, readChatBinding, saveChatBinding } from './chat.js';
 import { scanAllUnboundPresetUpdates } from './matcher.js';
 import {
     getActivePresetManager,
@@ -76,14 +77,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         plNotice: '',
         lastSavedGroupId: null,
 
-        // Tab 2: Character -> Preset Composer
-        editingCharAvatar: null,
-        selectedCharAvatar: '',
-        selectedCharPreset: '',
-        charSearch: '',
-        cpBaseline: JSON.stringify({ avatar: '', preset: '' }),
-        cpNotice: '',
-        lastSavedCharAvatar: null,
 
         // Tab 3: Scan results
         scanResults: null,
@@ -99,15 +92,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         return cur !== state.plBaseline;
     };
 
-    const isCharComposerDirty = () => {
-        const cur = JSON.stringify({
-            avatar: state.selectedCharAvatar || '',
-            preset: state.selectedCharPreset || '',
-        });
-        return cur !== state.cpBaseline;
-    };
-
-    const isAnyDirty = () => isPresetComposerDirty() || isCharComposerDirty();
 
     const resetPresetComposer = (notice = '') => {
         state.editingGroupId = null;
@@ -136,20 +120,88 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         state.plNotice = notice;
     };
 
-    const resetCharComposer = (notice = '') => {
-        state.editingCharAvatar = null;
-        state.selectedCharAvatar = '';
-        state.selectedCharPreset = '';
-        state.cpBaseline = JSON.stringify({ avatar: '', preset: '' });
-        state.cpNotice = notice;
+
+    let draftChat = null;
+    let draft = {};
+    let savedDraft = '';
+    let savingChat = false;
+
+    const loadChatDraft = (chat = currentChat()) => {
+        draftChat = chat;
+        draft = { preset: '', apiId: '', prompts: {}, lorebooks: [], ...readChatBinding(chat) };
+        savedDraft = JSON.stringify(draft);
+    };
+    loadChatDraft();
+
+    const isChatDirty = () => JSON.stringify(draft) !== savedDraft;
+    const isAnyDirty = () => isPresetComposerDirty() || isChatDirty();
+
+    const saveChatDraft = async (binding = draft) => {
+        if (savingChat || !draftChat) return false;
+        savingChat = true;
+        try {
+            await saveChatBinding(draftChat, binding);
+            loadChatDraft();
+            await applyCurrentChatBinding();
+            renderAll();
+            toastr.success(binding.preset || binding.lorebooks?.length ? '已保存聊天绑定' : '已解除聊天绑定');
+            return true;
+        } catch (error) {
+            toastr.error(error.message || '保存聊天绑定失败');
+            return false;
+        } finally {
+            savingChat = false;
+        }
     };
 
-    const loadCharIntoComposer = (avatar, presetName, notice = '') => {
-        state.editingCharAvatar = avatar;
-        state.selectedCharAvatar = avatar;
-        state.selectedCharPreset = presetName;
-        state.cpBaseline = JSON.stringify({ avatar: avatar || '', preset: presetName || '' });
-        state.cpNotice = notice;
+    const renderChatTab = (env) => {
+        const chat = currentChat();
+        if (!chat) return '<p class="lk-empty-inline">请先打开一条聊天。</p>';
+        const apiId = env.pm?.apiId;
+        const missingPreset = draft.preset && (!env.allPresets.includes(draft.preset) || draft.apiId !== apiId);
+        const presetOptions = [...(missingPreset ? [draft.preset] : []), ...env.allPresets.filter(preset => !missingPreset || preset !== draft.preset)];
+        const prompts = draft.apiId === apiId ? listPresetPrompts(env.pm, draft.preset) : [];
+        const missingPrompts = !missingPreset && Object.keys(draft.prompts).filter(id => !prompts.some(prompt => prompt.identifier === id));
+        const allBooks = uniqueStrings([...draft.lorebooks, ...env.allLorebooks]);
+        return `
+            <div class="lk-settings-card">
+                <h3>当前聊天 <span>${esc(chat.name)}</span></h3>
+                <label for="lk-chat-preset">聊天预设</label>
+                <select class="text_pole lk-select" id="lk-chat-preset">
+                    <option value="">沿用当前预设</option>
+                    ${presetOptions.map(preset => `<option value="${esc(preset)}" ${preset === draft.preset ? 'selected' : ''}>${esc(preset)}${missingPreset && preset === draft.preset ? '（当前不可用）' : ''}</option>`).join('')}
+                </select>
+                ${missingPreset ? '<p>请选择当前 API 可用的预设。</p>' : ''}
+                ${missingPrompts?.length ? `<p>找不到条目 ${esc(missingPrompts.join('、'))}。保存时会移除这些条目的覆盖。</p>` : ''}
+                ${prompts.length ? '<h4>提示词条目</h4>' : ''}
+                ${prompts.map(prompt => `
+                    <label class="lk-switch-row">
+                        <span>${esc(prompt.name || prompt.identifier)}</span>
+                        <select class="text_pole" data-chat-prompt="${esc(prompt.identifier)}">
+                            <option value="">沿用预设</option>
+                            <option value="on" ${draft.prompts[prompt.identifier] === true ? 'selected' : ''}>开启</option>
+                            <option value="off" ${draft.prompts[prompt.identifier] === false ? 'selected' : ''}>关闭</option>
+                        </select>
+                    </label>`).join('')}
+                <h4>额外启用的全局世界书</h4>
+                ${allBooks.map(book => `<label class="checkbox_label lk-switch-row">
+                    <input type="checkbox" data-chat-book="${esc(book)}" ${draft.lorebooks.includes(book) ? 'checked' : ''} />
+                    <span>${esc(book)}${env.allLorebooks.includes(book) ? '' : '（未找到）'}</span>
+                </label>`).join('')}
+                <div class="lk-drawer-actions">
+                    <button type="button" class="menu_button" data-action="clear-chat-binding">解除绑定</button>
+                    <button type="button" class="menu_button" data-action="save-chat-binding" ${missingPreset ? 'disabled' : ''}>保存聊天绑定</button>
+                </div>
+            </div>`;
+    };
+
+    const getDraftToSave = () => {
+        const pm = getActivePresetManager();
+        const ids = new Set(listPresetPrompts(pm, draft.preset).map(prompt => prompt.identifier));
+        return {
+            ...draft,
+            prompts: Object.fromEntries(Object.entries(draft.prompts).filter(([id]) => ids.has(id))),
+        };
     };
 
     const backdrop = document.createElement('div');
@@ -162,7 +214,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                     <span class="lk-logo-badge"><i class="fa-solid fa-link"></i></span>
                     <div>
                         <h2 id="lk-modal-title" class="lk-title">${esc(EXTENSION_DISPLAY_NAME)}</h2>
-                        <div class="lk-subtitle">管理角色、预设与全局世界书的自动联动关系</div>
+                        <div class="lk-subtitle">管理聊天、预设与全局世界书的绑定</div>
                     </div>
                 </div>
                 <button type="button" class="lk-icon-close lk-main-close" title="关闭面板 (Esc)">
@@ -188,7 +240,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const currentPreset = getCurrentPresetName();
         const currentChar = getCurrentCharacter();
         const ctx = getStContext();
-        const allCharacters = Array.isArray(ctx?.characters) ? ctx.characters.filter(c => c?.avatar) : [];
         const settings = loadSettings();
         return {
             pm,
@@ -197,7 +248,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             activeLorebooks,
             currentPreset,
             currentChar,
-            allCharacters,
             settings,
         };
     };
@@ -233,7 +283,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         const wasActiveInvolved = activePreset && (presets.includes(activePreset) || prevActiveBooks.length > 0);
         let syncMsg = '';
         if (wasActiveInvolved) {
-            const syncRes = syncActivePresetImmediately({ previousBooksForActivePreset: prevActiveBooks });
+            const syncRes = syncActivePresetImmediately();
             if (syncRes.isActivePreset && presets.includes(activePreset)) {
                 syncMsg = `，当前全局世界书已即时同步（启用 ${syncRes.activatedValid.length} 本）`;
             }
@@ -255,47 +305,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         return true;
     };
 
-    const performSaveCharBinding = () => {
-        const avatar = String(state.selectedCharAvatar || '').trim();
-        const preset = String(state.selectedCharPreset || '').trim();
-
-        if (!avatar) {
-            toastr.warning('请先选择要绑定的角色。');
-            return false;
-        }
-        if (!preset) {
-            toastr.warning('请选择该角色对应的预设。');
-            return false;
-        }
-
-        const env = getLiveEnvData();
-        const settings = env.settings;
-        if (state.editingCharAvatar && state.editingCharAvatar !== avatar) {
-            delete settings.characterPresetBindings[state.editingCharAvatar];
-        }
-        settings.characterPresetBindings[avatar] = preset;
-        saveSettings(settings);
-
-        state.lastSavedCharAvatar = avatar;
-        resetCharComposer('');
-
-        const charObj = env.allCharacters.find(c => c.avatar === avatar);
-        const charName = charObj?.name || avatar;
-
-        let switchedMsg = '';
-        if (env.currentChar?.avatar === avatar && env.pm) {
-            const val = env.pm.findPreset(preset);
-            if (val !== undefined && val !== null && env.pm.getSelectedPresetName() !== preset) {
-                env.pm.selectPreset(val);
-                switchedMsg = '，并已为当前聊天切换至此预设';
-            }
-        }
-
-        toastr.success(`已为角色「${charName}」绑定预设「${preset}」${switchedMsg}`);
-        syncExtensionDrawerSummary();
-        renderAll();
-        return true;
-    };
 
     const confirmOrResolveDirty = async (contextDesc) => {
         if (isPresetComposerDirty()) {
@@ -307,14 +316,11 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             resetPresetComposer();
             return true;
         }
-        if (isCharComposerDirty()) {
-            const action = await promptUnsavedChanges(contextDesc || '「角色 ↔ 预设」编辑区有未保存的绑定配置');
+        if (isChatDirty()) {
+            const action = await promptUnsavedChanges('当前聊天还有未保存的绑定配置');
             if (action === 'cancel') return false;
-            if (action === 'save') {
-                return performSaveCharBinding();
-            }
-            resetCharComposer();
-            return true;
+            if (action === 'save') return saveChatDraft(getDraftToSave());
+            loadChatDraft();
         }
         return true;
     };
@@ -397,7 +403,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         if (!tabsEl) return;
 
         const plCount = env.settings.bindingGroups.length;
-        const cpCount = Object.keys(env.settings.characterPresetBindings).length;
         const autoOn = Boolean(env.settings.options.autoBindPresetUpdate);
 
         tabsEl.innerHTML = `
@@ -406,10 +411,9 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 <span>预设 ↔ 世界书</span>
                 <span class="lk-tab-count">${plCount}</span>
             </button>
-            <button type="button" role="tab" class="lk-tab ${state.activeTab === 'char-preset' ? 'is-active' : ''}" data-tab="char-preset">
-                <i class="fa-solid fa-user-tag"></i>
-                <span>角色 ↔ 预设</span>
-                <span class="lk-tab-count">${cpCount}</span>
+            <button type="button" role="tab" class="lk-tab ${state.activeTab === 'chat-binding' ? 'is-active' : ''}" data-tab="chat-binding">
+                <i class="fa-solid fa-comments"></i>
+                <span>当前聊天</span>
             </button>
             <button type="button" role="tab" class="lk-tab ${state.activeTab === 'settings' ? 'is-active' : ''}" data-tab="settings">
                 <i class="fa-solid fa-sliders"></i>
@@ -729,202 +733,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         `;
     };
 
-    const renderCharPresetTab = (env) => {
-        const isEditing = Boolean(state.editingCharAvatar);
-        const dirty = isCharComposerDirty();
-        const charMap = new Map(env.allCharacters.map(c => [c.avatar, c]));
-        const presetSet = new Set(env.allPresets);
-
-        const charOptions = [
-            `<option value="">-- 请选择角色 --</option>`,
-            ...(state.selectedCharAvatar && !charMap.has(state.selectedCharAvatar)
-                ? [`<option value="${esc(state.selectedCharAvatar)}" selected>${esc(state.selectedCharAvatar)} (角色未找到)</option>`]
-                : []),
-            ...env.allCharacters.map((c) => {
-                const bound = env.settings.characterPresetBindings[c.avatar];
-                const suffix = bound && c.avatar !== state.editingCharAvatar ? ` · 已绑: ${bound}` : '';
-                return `<option value="${esc(c.avatar)}" ${c.avatar === state.selectedCharAvatar ? 'selected' : ''}>${esc(c.name)}${esc(suffix)}</option>`;
-            }),
-        ].join('');
-
-        const presetOptions = [
-            `<option value="">-- 请选择要绑定的预设 --</option>`,
-            ...(state.selectedCharPreset && !presetSet.has(state.selectedCharPreset)
-                ? [`<option value="${esc(state.selectedCharPreset)}" selected>${esc(state.selectedCharPreset)} (预设未找到)</option>`]
-                : []),
-            ...env.allPresets.map(p => `<option value="${esc(p)}" ${p === state.selectedCharPreset ? 'selected' : ''}>${esc(p)}</option>`),
-        ].join('');
-
-        let linkageHintHtml = '';
-        if (state.selectedCharPreset) {
-            const linkedGroup = findGroupByPreset(env.settings, state.selectedCharPreset);
-            const linkedBooks = linkedGroup ? linkedGroup.lorebooks : [];
-            if (linkedBooks.length > 0) {
-                const cMeta = getRainbowColorMeta(linkedGroup?.color);
-                const grpBadge = linkedGroup?.name
-                    ? `（绑定组：${cMeta ? `<span class="lk-color-dot" style="--dot-color:${cMeta.hex};"></span>` : ''}<b>${esc(linkedGroup.name)}</b>）`
-                    : '';
-                linkageHintHtml = `
-                    <div class="lk-linkage-preview is-linked">
-                        <i class="fa-solid fa-link"></i>
-                        <span>联动预览：打开该角色聊天时，将自动切换到预设<b>「${esc(state.selectedCharPreset)}」</b>${grpBadge}，并联动启用 <b>${linkedBooks.length} 本世界书</b>（${esc(linkedBooks.slice(0, 4).join('、'))}${linkedBooks.length > 4 ? '…' : ''}）。</span>
-                    </div>
-                `;
-            } else {
-                linkageHintHtml = `
-                    <div class="lk-linkage-preview">
-                        <i class="fa-regular fa-lightbulb"></i>
-                        <span>提示：预设「${esc(state.selectedCharPreset)}」暂未配置世界书绑定，进入角色聊天时仅自动切换预设。</span>
-                    </div>
-                `;
-            }
-        }
-
-        const entries = Object.entries(env.settings.characterPresetBindings);
-        const ckw = state.charSearch.trim().toLowerCase();
-        const filteredEntries = ckw
-            ? entries.filter(([avatar, preset]) => {
-                const cName = charMap.get(avatar)?.name || avatar;
-                return cName.toLowerCase().includes(ckw) || preset.toLowerCase().includes(ckw);
-            })
-            : entries;
-
-        const charCardsHtml = entries.length === 0
-            ? `
-                <div class="lk-empty-card">
-                    <i class="fa-solid fa-user-tag lk-empty-icon"></i>
-                    <div class="lk-empty-title">还没有角色与预设绑定</div>
-                    <div class="lk-empty-desc">为特定角色绑定专属预设后，每次打开该角色的聊天窗口，会自动切换到对应预设并触发世界书联动。</div>
-                </div>
-            `
-            : filteredEntries.length === 0
-                ? `<div class="lk-empty-inline">没有匹配「${esc(state.charSearch)}」的角色绑定</div>`
-                : filteredEntries.map(([avatar, presetName]) => {
-                    const charObj = charMap.get(avatar);
-                    const charName = charObj?.name || avatar;
-                    const charExists = Boolean(charObj);
-                    const presetExists = presetSet.has(presetName);
-                    const linkedGroup = findGroupByPreset(env.settings, presetName);
-                    const linkedBooks = linkedGroup ? linkedGroup.lorebooks : [];
-                    const colorMeta = getRainbowColorMeta(linkedGroup?.color);
-                    const isCurrentChar = env.currentChar?.avatar === avatar;
-                    const isBeingEdited = state.editingCharAvatar === avatar;
-                    const isJustSaved = state.lastSavedCharAvatar === avatar;
-                    const cardStyle = colorMeta ? `style="--lk-tag-color: ${colorMeta.hex};"` : '';
-
-                    return `
-                        <div class="lk-rule-card ${colorMeta ? 'has-tag-color' : ''} ${isBeingEdited ? 'is-editing' : ''} ${isJustSaved ? 'is-flash' : ''} ${isCurrentChar ? 'is-active-group' : ''}" ${cardStyle}>
-                            <div class="lk-rule-content">
-                                <div class="lk-rule-main">
-                                    <div class="lk-rule-presets">
-                                        <span class="lk-rule-preset ${isCurrentChar ? 'is-current' : ''} ${charExists ? '' : 'is-missing'}">
-                                            <i class="fa-solid fa-user"></i>
-                                            <span>${esc(charName)}</span>
-                                            ${isCurrentChar ? '<em>当前</em>' : !charExists ? '<em>角色未找到</em>' : ''}
-                                        </span>
-                                    </div>
-                                    <div class="lk-rule-arrow"><i class="fa-solid fa-arrow-right-long"></i></div>
-                                    <div class="lk-rule-books">
-                                        <span class="lk-rule-book ${presetExists ? '' : 'is-missing'}">
-                                            <i class="fa-solid fa-sliders"></i> ${esc(presetName)}${presetExists ? '' : ' (预设未找到)'}
-                                        </span>
-                                        ${linkedBooks.length > 0 ? `
-                                            <span class="lk-mini-tag is-live" title="${esc(linkedBooks.join('、'))}">
-                                                ${colorMeta ? `<span class="lk-color-dot" style="--dot-color:${colorMeta.hex};"></span>` : ''}
-                                                ${linkedGroup?.name ? `${esc(linkedGroup.name)} · ` : ''}联动 ${linkedBooks.length} 本世界书
-                                            </span>
-                                        ` : ''}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="lk-rule-actions">
-                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-secondary" data-action="edit-char-binding" data-avatar="${esc(avatar)}">
-                                    <i class="fa-solid fa-pen"></i><span>编辑</span>
-                                </button>
-                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-danger-ghost" data-action="delete-char-binding" data-avatar="${esc(avatar)}" title="删除此角色绑定">
-                                    <i class="fa-solid fa-trash-can"></i>
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-
-        return `
-            <div class="lk-section">
-                <div class="lk-composer ${isEditing ? 'is-editing-mode' : ''}">
-                    <div class="lk-composer-head">
-                        <div class="lk-composer-title">
-                            <span class="lk-mode-pill ${isEditing ? 'is-edit' : 'is-new'}">${isEditing ? '编辑模式' : '新建绑定'}</span>
-                            <span>设置进入角色聊天时自动切换的预设</span>
-                        </div>
-                        ${isEditing ? `
-                            <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-ghost" data-action="cancel-cp-edit">
-                                <i class="fa-solid fa-rotate-left"></i><span>退出编辑</span>
-                            </button>
-                        ` : ''}
-                    </div>
-
-                    ${state.cpNotice ? `<div class="lk-inline-banner"><i class="fa-solid fa-circle-info"></i><span>${esc(state.cpNotice)}</span></div>` : ''}
-
-                    <div class="lk-two-col">
-                        <div class="lk-step">
-                            <div class="lk-step-head">
-                                <label class="lk-step-label" for="lk-char-select"><span class="lk-step-num">1</span>选择角色</label>
-                                ${env.currentChar ? `
-                                    <button type="button" class="lk-link-btn" data-action="pick-current-char">填入当前角色「${esc(env.currentChar.name)}」</button>
-                                ` : ''}
-                            </div>
-                            <select id="lk-char-select" class="text_pole lk-select">${charOptions}</select>
-                        </div>
-
-                        <div class="lk-step">
-                            <div class="lk-step-head">
-                                <label class="lk-step-label" for="lk-char-preset-select"><span class="lk-step-num">2</span>选择绑定预设</label>
-                                ${env.currentPreset ? `
-                                    <button type="button" class="lk-link-btn" data-action="pick-current-preset-for-char">填入当前预设</button>
-                                ` : ''}
-                            </div>
-                            <select id="lk-char-preset-select" class="text_pole lk-select">${presetOptions}</select>
-                        </div>
-                    </div>
-
-                    ${linkageHintHtml}
-
-                    <div class="lk-composer-footer">
-                        <div class="lk-dirty-indicator">
-                            ${dirty ? '<span class="lk-dirty-dot"></span><span>有未保存的角色绑定修改</span>' : '<span class="lk-muted-hint">切换聊天时将自动为你套用角色绑定的预设</span>'}
-                        </div>
-                        <div class="lk-composer-btns">
-                            ${(dirty || isEditing) ? `
-                                <button type="button" class="menu_button lk-btn lk-btn-secondary" data-action="reset-cp-composer">
-                                    <span>${isEditing ? '取消修改' : '重置'}</span>
-                                </button>
-                            ` : ''}
-                            <button type="button" class="menu_button lk-btn lk-btn-primary ${state.selectedCharAvatar && state.selectedCharPreset ? '' : 'is-incomplete'}" data-action="save-cp-binding">
-                                <i class="fa-solid fa-check"></i>
-                                <span>${isEditing ? '保存修改' : '保存角色绑定'}</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="lk-list-section">
-                    <div class="lk-list-header">
-                        <div class="lk-list-title">已绑定的角色 <span>(${entries.length})</span></div>
-                        ${entries.length >= 4 ? `
-                            <div class="lk-search-box lk-search-sm">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="search" id="lk-char-search" class="text_pole lk-search-input" placeholder="搜索角色或预设..." value="${esc(state.charSearch)}" />
-                            </div>
-                        ` : ''}
-                    </div>
-                    <div class="lk-rule-list">
-                        ${charCardsHtml}
-                    </div>
-                </div>
-            </div>
-        `;
-    };
 
     const renderSettingsTab = (env) => {
         const opts = env.settings.options;
@@ -992,21 +800,14 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                         <input type="checkbox" class="lk-opt-checkbox" data-opt="promptOnPresetUpdate" ${opts.promptOnPresetUpdate !== false ? 'checked' : ''} ${opts.autoBindPresetUpdate ? 'disabled' : ''} />
                     </label>
 
-                    <label class="checkbox_label lk-switch-row">
-                        <div class="lk-switch-text">
-                            <div class="lk-switch-title">继承新版预设时同步更新角色绑定</div>
-                            <div class="lk-switch-desc">当新版预设并入旧绑定组时，默认将原本绑定在旧版本预设上的角色一并更新为新版预设。</div>
-                        </div>
-                        <input type="checkbox" class="lk-opt-checkbox" data-opt="syncCharPresetOnUpdate" ${opts.syncCharPresetOnUpdate ? 'checked' : ''} />
-                    </label>
                 </div>
 
                 <div class="lk-settings-card">
                     <div class="lk-settings-group-title">通知与反馈</div>
                     <label class="checkbox_label lk-switch-row">
                         <div class="lk-switch-text">
-                            <div class="lk-switch-title">切换预设或角色联动时显示右上角提醒</div>
-                            <div class="lk-switch-desc">自动启用/卸载世界书或按角色切换预设时，弹出简短 Toast 状态提示（缺失世界书的警告始终保留）。</div>
+                            <div class="lk-switch-title">切换时显示右上角提醒</div>
+                            <div class="lk-switch-desc">自动启用或撤下世界书时，弹出简短 Toast 状态提示（缺失世界书的警告始终保留）。</div>
                         </div>
                         <input type="checkbox" class="lk-opt-checkbox" data-opt="notifyOnSwitch" ${opts.notifyOnSwitch !== false ? 'checked' : ''} />
                     </label>
@@ -1053,23 +854,23 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
 
         if (state.activeTab === 'preset-lorebook') {
             body.innerHTML = renderPresetLorebookTab(env);
-        } else if (state.activeTab === 'char-preset') {
-            body.innerHTML = renderCharPresetTab(env);
+        } else if (state.activeTab === 'chat-binding') {
+            body.innerHTML = renderChatTab(env);
         } else {
             body.innerHTML = renderSettingsTab(env);
         }
     };
 
     const renderAll = () => {
+        if (draftChat?.key !== currentChat()?.key && (draftChat || currentChat())) loadChatDraft();
         const env = getLiveEnvData();
         renderStatusBar(env);
         renderTabs(env);
         renderBody(env);
 
-        if (state.lastSavedGroupId || state.lastSavedCharAvatar) {
+        if (state.lastSavedGroupId) {
             setTimeout(() => {
                 state.lastSavedGroupId = null;
-                state.lastSavedCharAvatar = null;
             }, 900);
         }
     };
@@ -1299,11 +1100,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 }
 
                 const titleLabel = grp.name ? `「${grp.name}」` : '该绑定组';
-                applyGlobalLorebookDiff([], grp.lorebooks, {
-                    presetLabel: targetPreset || grp.presets[0],
-                    showToast: true,
-                    customToast: `已启用${titleLabel}中的 ${grp.lorebooks.length} 本世界书`,
-                });
+                syncActivePresetImmediately({ showToast: true, customToast: `已启用${titleLabel}中的 ${grp.lorebooks.length} 本世界书` });
                 renderAll();
                 break;
             }
@@ -1319,7 +1116,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 const { choice, checked } = await openSubDialog({
                     title: '删除世界书绑定',
                     bodyHtml: `<p class="lk-sub-text">确定要移除 <b>「${esc(label)}」</b> 与 ${grp.lorebooks.length} 本世界书的绑定关系吗？</p>`,
-                    checkboxLabel: isCurrentInGroup ? `同时在当前全局世界书中关闭这 ${grp.lorebooks.length} 本世界书` : '',
+                    checkboxLabel: isCurrentInGroup ? `同步撤下该组自动启用且当前不再需要的世界书` : '',
                     checkboxDefault: false,
                     buttons: [
                         { key: 'cancel', label: '取消', variant: 'ghost' },
@@ -1335,11 +1132,8 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 }
 
                 if (isCurrentInGroup && checked) {
-                    applyGlobalLorebookDiff(grp.lorebooks, [], {
-                        presetLabel: env.currentPreset,
-                        showToast: false,
-                    });
-                    toastr.info(`已删除「${label}」的绑定，并同步关闭对应世界书`);
+                    syncActivePresetImmediately();
+                    toastr.info(`已删除「${label}」的绑定并同步全局世界书`);
                 } else {
                     toastr.info(`已删除「${label}」的绑定关系`);
                 }
@@ -1349,78 +1143,12 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 break;
             }
 
-            // Tab 2 actions
-            case 'pick-current-char': {
-                const env = getLiveEnvData();
-                if (!env.currentChar) return;
-                handleCharPick(env.currentChar.avatar, env);
-                renderAll();
+            case 'save-chat-binding':
+                await saveChatDraft(getDraftToSave());
                 break;
-            }
-
-            case 'pick-current-preset-for-char': {
-                const env = getLiveEnvData();
-                if (!env.currentPreset) return;
-                state.selectedCharPreset = env.currentPreset;
-                renderAll();
+            case 'clear-chat-binding':
+                await saveChatDraft({});
                 break;
-            }
-
-            case 'reset-cp-composer':
-            case 'cancel-cp-edit': {
-                resetCharComposer();
-                renderAll();
-                break;
-            }
-
-            case 'save-cp-binding': {
-                performSaveCharBinding();
-                break;
-            }
-
-            case 'edit-char-binding': {
-                const avatar = actionEl.dataset.avatar;
-                if (state.editingCharAvatar !== avatar) {
-                    const ok = await confirmOrResolveDirty();
-                    if (!ok) return;
-                }
-                const env = getLiveEnvData();
-                const preset = env.settings.characterPresetBindings[avatar];
-                if (preset) {
-                    loadCharIntoComposer(avatar, preset, '');
-                    renderAll();
-                    backdrop.querySelector('#lk-body')?.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-                break;
-            }
-
-            case 'delete-char-binding': {
-                const avatar = actionEl.dataset.avatar;
-                const env = getLiveEnvData();
-                const preset = env.settings.characterPresetBindings[avatar];
-                if (!preset) return;
-                const charName = env.allCharacters.find(c => c.avatar === avatar)?.name || avatar;
-
-                const { choice } = await openSubDialog({
-                    title: '移除角色预设绑定',
-                    bodyHtml: `<p class="lk-sub-text">确定要移除角色 <b>「${esc(charName)}」</b> 与预设 <b>「${esc(preset)}」</b> 的自动切换关系吗？</p>`,
-                    buttons: [
-                        { key: 'cancel', label: '取消', variant: 'ghost' },
-                        { key: 'delete', label: '确认移除', variant: 'danger', icon: 'fa-solid fa-trash-can' },
-                    ],
-                });
-                if (choice !== 'delete') return;
-
-                delete env.settings.characterPresetBindings[avatar];
-                saveSettings(env.settings);
-                if (state.editingCharAvatar === avatar) {
-                    resetCharComposer();
-                }
-                toastr.info(`已移除角色「${charName}」的预设绑定`);
-                syncExtensionDrawerSummary();
-                renderAll();
-                break;
-            }
 
             // Tab 3 actions
             case 'run-update-scan': {
@@ -1438,12 +1166,10 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 const preset = actionEl.dataset.preset;
                 const groupId = actionEl.dataset.groupId;
                 const env = getLiveEnvData();
-                const res = attachPresetToGroup(groupId, preset, {
-                    replaceOldPresetInChars: Boolean(env.settings.options.syncCharPresetOnUpdate),
-                });
+                const res = attachPresetToGroup(groupId, preset);
                 if (res.updated) {
                     if (env.currentPreset === preset && res.group) {
-                        applyGlobalLorebookDiff([], res.group.lorebooks, { presetLabel: preset, showToast: false });
+                        syncActivePresetImmediately();
                     }
                     toastr.success(`已将新版预设「${preset}」并入原世界书绑定组`);
                 }
@@ -1463,13 +1189,11 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 const list = Array.isArray(state.scanResults) ? [...state.scanResults] : [];
                 let count = 0;
                 for (const item of list) {
-                    const res = attachPresetToGroup(item.group.id, item.candidatePreset, {
-                        replaceOldPresetInChars: Boolean(env.settings.options.syncCharPresetOnUpdate),
-                    });
+                    const res = attachPresetToGroup(item.group.id, item.candidatePreset);
                     if (res.updated) {
                         count++;
                         if (env.currentPreset === item.candidatePreset && res.group) {
-                            applyGlobalLorebookDiff([], res.group.lorebooks, { presetLabel: item.candidatePreset, showToast: false });
+                            syncActivePresetImmediately();
                         }
                     }
                 }
@@ -1531,19 +1255,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
     }
 
-    function handleCharPick(avatar, env) {
-        if (!avatar) {
-            state.selectedCharAvatar = '';
-            return;
-        }
-        const existingPreset = env.settings.characterPresetBindings[avatar];
-        if (!state.editingCharAvatar && existingPreset && !state.selectedCharPreset) {
-            const cName = env.allCharacters.find(c => c.avatar === avatar)?.name || avatar;
-            loadCharIntoComposer(avatar, existingPreset, `角色「${cName}」已绑定预设，已载入现有配置供你修改。`);
-            return;
-        }
-        state.selectedCharAvatar = avatar;
-    }
 
     backdrop.addEventListener('change', (e) => {
         const t = e.target;
@@ -1578,19 +1289,24 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             return;
         }
 
-        if (t.id === 'lk-char-select') {
-            const env = getLiveEnvData();
-            handleCharPick(t.value, env);
+
+        if (t.id === 'lk-chat-preset') {
+            draft.preset = t.value;
+            draft.apiId = t.value ? getActivePresetManager()?.apiId || '' : '';
+            draft.prompts = {};
             renderAll();
             return;
         }
-
-        if (t.id === 'lk-char-preset-select') {
-            state.selectedCharPreset = t.value;
-            renderAll();
+        if (t.dataset.chatPrompt) {
+            if (t.value) draft.prompts = { ...draft.prompts, [t.dataset.chatPrompt]: t.value === 'on' };
+            else delete draft.prompts[t.dataset.chatPrompt];
             return;
         }
-
+        if (t.dataset.chatBook) {
+            draft.lorebooks = t.checked ? uniqueStrings([...draft.lorebooks, t.dataset.chatBook])
+                : draft.lorebooks.filter(book => book !== t.dataset.chatBook);
+            return;
+        }
         if (t.classList.contains('lk-opt-checkbox') && t.dataset.opt) {
             const optKey = t.dataset.opt;
             const s = loadSettings();
@@ -1625,16 +1341,6 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             }
             return;
         }
-        if (t.id === 'lk-char-search') {
-            state.charSearch = t.value;
-            const pos = t.selectionStart;
-            renderBody(getLiveEnvData());
-            const nextInput = backdrop.querySelector('#lk-char-search');
-            if (nextInput) {
-                nextInput.focus();
-                if (typeof pos === 'number') nextInput.setSelectionRange(pos, pos);
-            }
-        }
     });
 
     document.addEventListener('keydown', onKeyDown);
@@ -1643,7 +1349,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
     renderAll();
 
     setOnStateChangedCallback(() => {
-        if (backdrop.isConnected && !isAnyDirty()) {
+        if (backdrop.isConnected && (!isAnyDirty() || draftChat?.key !== currentChat()?.key)) {
             renderAll();
         } else if (backdrop.isConnected) {
             renderStatusBar(getLiveEnvData());
@@ -1660,8 +1366,7 @@ export function syncExtensionDrawerSummary() {
     const summaryEl = document.getElementById('lk-drawer-summary');
     if (summaryEl) {
         const gCount = s.bindingGroups.length;
-        const cCount = Object.keys(s.characterPresetBindings).length;
-        summaryEl.textContent = `已保存 ${gCount} 组预设世界书绑定 · ${cCount} 个角色预设绑定`;
+        summaryEl.textContent = `已保存 ${gCount} 组预设世界书绑定`;
     }
     const autoChk = document.getElementById('lk-drawer-auto-update');
     if (autoChk) {
@@ -1672,16 +1377,24 @@ export function syncExtensionDrawerSummary() {
 export function mountExtensionEntries() {
     const extMenu = document.getElementById('extensionsMenu');
     if (extMenu && !document.getElementById('preset-binder-menu-item')) {
+        const container = document.createElement('div');
+        container.className = 'extension_container';
         const item = document.createElement('div');
         item.id = 'preset-binder-menu-item';
-        item.className = 'list-group-item flex-container flexGap5 interactable';
         item.tabIndex = 0;
+        item.setAttribute('role', 'button');
         item.innerHTML = `
-            <span class="fa-solid fa-fw fa-link"></span>
+            <div aria-hidden="true" class="fa-solid fa-link extensionsMenuExtensionButton"></div>
             <span>${esc(EXTENSION_DISPLAY_NAME)}</span>
         `;
         item.addEventListener('click', () => showSettingsPanel('preset-lorebook'));
-        extMenu.appendChild(item);
+        item.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            item.click();
+        });
+        container.appendChild(item);
+        extMenu.appendChild(container);
     }
 
     const host = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
