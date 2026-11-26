@@ -31,7 +31,6 @@ function normalizeColorKey(rawColor) {
 export const DEFAULT_OPTIONS = {
     autoBindPresetUpdate: false,   // 默认关闭自动绑定，由用户手动开启
     promptOnPresetUpdate: true,    // 默认开启新版预设识别弹窗提醒
-    syncCharPresetOnUpdate: false, // 继承新版预设时是否默认同步更新角色绑定
     notifyOnSwitch: true,          // 切换预设/角色联动时显示右上角状态提醒
 };
 
@@ -51,21 +50,6 @@ export function uniqueStrings(arr) {
         }
     }
     return out;
-}
-
-/**
- * Rebuilds legacy `presetLorebookBindings` map from `bindingGroups` so legacy format stays in sync.
- */
-function buildLegacyMapFromGroups(groups) {
-    const map = {};
-    for (const grp of groups) {
-        const books = uniqueStrings(grp.lorebooks);
-        if (!books.length) continue;
-        for (const preset of uniqueStrings(grp.presets)) {
-            map[preset] = [...books];
-        }
-    }
-    return map;
 }
 
 /**
@@ -115,7 +99,7 @@ export function loadSettings() {
                 updatedAt: Number(g.updatedAt) || Date.now(),
             });
         }
-    } else if (raw.presetLorebookBindings && typeof raw.presetLorebookBindings === 'object') {
+    } else if (!Object.hasOwn(raw, 'bindingGroups') && raw.presetLorebookBindings && typeof raw.presetLorebookBindings === 'object' && !Array.isArray(raw.presetLorebookBindings)) {
         migrated = true;
         for (const [preset, booksRaw] of Object.entries(raw.presetLorebookBindings)) {
             const presetName = String(preset || '').trim();
@@ -138,12 +122,17 @@ export function loadSettings() {
         version: 2,
         options,
         bindingGroups,
-        presetLorebookBindings: buildLegacyMapFromGroups(bindingGroups),
+
         characterPresetBindings,
         ignoredUpdatePresets,
+        ...(Object.keys(raw.presetBeforeChat || {}).length ? { presetBeforeChat: { ...raw.presetBeforeChat } } : {}),
+        ...(raw.appliedLorebooks?.length ? { appliedLorebooks: uniqueStrings(raw.appliedLorebooks) } : {}),
     };
 
-    if (migrated || raw.version !== 2) {
+    const malformedGroups = (Object.hasOwn(raw, 'bindingGroups') && !Array.isArray(raw.bindingGroups))
+        || (Object.hasOwn(raw, 'presetLorebookBindings') && !Array.isArray(raw.bindingGroups)
+            && (!raw.presetLorebookBindings || typeof raw.presetLorebookBindings !== 'object' || Array.isArray(raw.presetLorebookBindings)));
+    if (!malformedGroups && (migrated || raw.version !== 2 || Object.hasOwn(raw, 'presetLorebookBindings'))) {
         root[EXTENSION_STORAGE_NAME][EXTENSION_SETTINGS_KEY] = normalized;
         getStContext()?.saveSettingsDebounced?.();
     }
@@ -152,7 +141,7 @@ export function loadSettings() {
 }
 
 /**
- * Persists plugin settings and keeps legacy compatibility map synchronized.
+ * Persists the canonical binding groups and plugin options.
  */
 export function saveSettings(data) {
     const root = getExtensionSettingsRoot();
@@ -187,9 +176,11 @@ export function saveSettings(data) {
             ...(data.options || {}),
         },
         bindingGroups: cleanGroups,
-        presetLorebookBindings: buildLegacyMapFromGroups(cleanGroups),
+
         characterPresetBindings: { ...(data.characterPresetBindings || {}) },
         ignoredUpdatePresets: uniqueStrings(data.ignoredUpdatePresets),
+        ...(Object.keys(data.presetBeforeChat || {}).length ? { presetBeforeChat: { ...data.presetBeforeChat } } : {}),
+        ...(data.appliedLorebooks?.length ? { appliedLorebooks: uniqueStrings(data.appliedLorebooks) } : {}),
     };
 
     root[EXTENSION_STORAGE_NAME][EXTENSION_SETTINGS_KEY] = payload;
@@ -271,32 +262,20 @@ export function upsertBindingGroup({ groupId = null, name = '', color = '', pres
     };
 }
 
-export function attachPresetToGroup(groupId, newPresetName, { replaceOldPresetInChars = false } = {}) {
+export function attachPresetToGroup(groupId, newPresetName) {
     const settings = loadSettings();
     const grp = settings.bindingGroups.find(g => g.id === groupId);
-    if (!grp || !newPresetName) return { updated: false, updatedCharCount: 0, settings };
+    if (!grp || !newPresetName) return { updated: false, settings };
 
-    const oldPresetsSnapshot = [...grp.presets];
     if (!grp.presets.includes(newPresetName)) {
         grp.presets.push(newPresetName);
         grp.updatedAt = Date.now();
-    }
-
-    let updatedCharCount = 0;
-    if (replaceOldPresetInChars) {
-        for (const [avatar, boundPreset] of Object.entries(settings.characterPresetBindings)) {
-            if (oldPresetsSnapshot.includes(boundPreset) && boundPreset !== newPresetName) {
-                settings.characterPresetBindings[avatar] = newPresetName;
-                updatedCharCount++;
-            }
-        }
     }
 
     settings.ignoredUpdatePresets = settings.ignoredUpdatePresets.filter(p => p !== newPresetName);
     const next = saveSettings(settings);
     return {
         updated: true,
-        updatedCharCount,
         group: next.bindingGroups.find(g => g.id === groupId) || grp,
         settings: next,
     };

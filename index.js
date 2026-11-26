@@ -1,19 +1,20 @@
-// Global Lorebook Keeper - v1.2
+// Global Lorebook Keeper - v1.3
 // Original author: sleepyfish
 // Enhanced with multi-preset binding groups, smart preset update inheritance & modernized UI
 
 import { extension_settings, getContext } from '../../../extensions.js';
+import { promptManager } from '../../../openai.js';
 import { getPresetManager } from '../../../preset-manager.js';
 import { selected_world_info, world_names } from '../../../world-info.js';
 
 import {
-    applyCharacterPreset,
-    handleCharacterRenamed,
+    applyCurrentChatBinding,
     handlePresetRenamed,
     handlePresetSelectChange,
     markPresetImportActivity,
     snapshotInitialPresets,
 } from './src/core.js';
+import { installPromptOverrides } from './src/chat.js';
 import { mountExtensionEntries } from './src/panel.js';
 import { registerStEnv } from './src/st-env.js';
 import { EXTENSION_DISPLAY_NAME, loadSettings } from './src/storage.js';
@@ -33,39 +34,23 @@ $(document).ready(function () {
     mountExtensionEntries();
     snapshotInitialPresets();
 
-    // Retry mounting in case async extension containers render slightly later
-    setTimeout(mountExtensionEntries, 1200);
-    setTimeout(mountExtensionEntries, 3000);
-
-    const ctx = getContext();
-    const { eventSource, eventTypes } = ctx;
-
-    if (eventSource && eventTypes) {
-        if (eventTypes.CHAT_CHANGED) {
-            eventSource.on(eventTypes.CHAT_CHANGED, () => {
-                mountExtensionEntries();
-                applyCharacterPreset();
-            });
-        }
-
-        if (eventTypes.OAI_PRESET_IMPORT_READY) {
-            eventSource.on(eventTypes.OAI_PRESET_IMPORT_READY, () => {
-                markPresetImportActivity();
-            });
-        }
-
-        if (eventTypes.PRESET_RENAMED) {
-            eventSource.on(eventTypes.PRESET_RENAMED, (payload) => {
-                handlePresetRenamed(payload);
-            });
-        }
-
-        if (eventTypes.CHARACTER_RENAMED) {
-            eventSource.on(eventTypes.CHARACTER_RENAMED, (oldAvatar, newAvatar) => {
-                handleCharacterRenamed(oldAvatar, newAvatar);
-            });
-        }
-    }
+    const reportError = error => console.error(`[${EXTENSION_DISPLAY_NAME}] 聊天绑定应用失败`, error);
+    const applyChat = () => {
+        installPromptOverrides(promptManager);
+        return applyCurrentChatBinding().catch(reportError);
+    };
+    const { eventSource, eventTypes } = getContext();
+    if (eventTypes?.APP_READY) eventSource.on(eventTypes.APP_READY, () => {
+        mountExtensionEntries();
+        return applyChat();
+    });
+    if (eventTypes?.CHAT_CHANGED) eventSource.on(eventTypes.CHAT_CHANGED, () => {
+        mountExtensionEntries();
+        return applyChat();
+    });
+    if (eventTypes?.MAIN_API_CHANGED) eventSource.on(eventTypes.MAIN_API_CHANGED, applyChat);
+    if (eventTypes?.OAI_PRESET_IMPORT_READY) eventSource.on(eventTypes.OAI_PRESET_IMPORT_READY, markPresetImportActivity);
+    if (eventTypes?.PRESET_RENAMED) eventSource.on(eventTypes.PRESET_RENAMED, handlePresetRenamed);
 
     // Track file-based preset imports across OpenAI, Text Completion & Master Import
     $(document).on(
@@ -77,5 +62,5 @@ $(document).ready(function () {
     // Core listener for preset switching across all SillyTavern APIs
     $(document).on('change', 'select[data-preset-manager-for]', handlePresetSelectChange);
 
-    console.log(`[${EXTENSION_DISPLAY_NAME}] v1.2 loaded.`);
+    void applyChat();
 });
