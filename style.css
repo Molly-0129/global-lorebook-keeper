@@ -1696,6 +1696,26 @@ body.no-blur .lk-sub-card {
     border-color: color-mix(in srgb, var(--lk-accent) 36%, var(--lk-border));
 }
 
+.lk-qb-book-card.is-unbound {
+    border-style: dashed;
+    opacity: 0.78;
+}
+
+.lk-qb-book-card.is-unbound .lk-qb-book-head {
+    cursor: default;
+}
+
+.lk-qb-book-card.is-unbound .lk-qb-book-name {
+    text-decoration: line-through;
+    opacity: 0.72;
+}
+
+.lk-qb-source.is-unbound-tag {
+    background: color-mix(in srgb, var(--lk-warn) 18%, transparent);
+    border-color: color-mix(in srgb, var(--lk-warn) 45%, transparent);
+    color: var(--lk-fg);
+}
+
 /* Constant elevated header tint so book headers clearly stand out from entry rows */
 .lk-qb-book-head {
     display: flex;

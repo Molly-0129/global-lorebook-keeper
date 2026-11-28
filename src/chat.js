@@ -119,6 +119,19 @@ export async function resetChatBookEntryOverrides(chat, worldName) {
 }
 
 /**
+ * Binds a single lorebook to the current chat via Global Lorebook Keeper.
+ */
+export async function bindChatLorebook(chat, worldName) {
+    const active = chat || currentChat();
+    if (!active) throw new Error('当前未打开有效聊天窗口。');
+    const clean = String(worldName || '').trim();
+    if (!clean) return;
+    const current = readChatBinding(active);
+    const nextLorebooks = uniqueStrings([...(current.lorebooks || []), clean]);
+    await saveChatBinding(active, { ...current, lorebooks: nextLorebooks });
+}
+
+/**
  * Unbinds a single lorebook that was bound to the current chat via Global Lorebook Keeper.
  */
 export async function unbindChatLorebook(chat, worldName) {

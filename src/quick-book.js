@@ -1,6 +1,7 @@
 // Quick Book Viewer (快速翻书): input-bar button + per-chat lorebook & entry switcher
 
 import {
+    bindChatLorebook,
     currentChat,
     readChatBinding,
     resetChatBookEntryOverrides,
@@ -312,8 +313,9 @@ export async function openQuickBookPanel() {
         books: [],
         loading: true,
         search: '',
-        expandedBooks: new Set(),   // All books collapsed by default
-        expandedEntries: new Set(), // Read-only entry detail drawers
+        expandedBooks: new Set(),        // All books collapsed by default
+        expandedEntries: new Set(),      // Read-only entry detail drawers
+        recentlyUnboundBooks: new Set(), // Keep unbound chat books visible during this panel session for 1-click undo
     };
 
     const backdrop = document.createElement('div');
@@ -381,9 +383,9 @@ export async function openQuickBookPanel() {
             sub.textContent = '当前未打开聊天窗口';
             return;
         }
-        const totalBooks = state.books.length;
-        const totalEnabled = state.books.reduce((sum, b) => sum + b.enabledCount, 0);
-        const totalOverrides = state.books.reduce((sum, b) => sum + b.overrideCount, 0);
+        const totalBooks = state.books.filter(b => !b.isUnboundOnly).length;
+        const totalEnabled = state.books.reduce((sum, b) => sum + (b.isUnboundOnly ? 0 : b.enabledCount), 0);
+        const totalOverrides = state.books.reduce((sum, b) => sum + (b.isUnboundOnly ? 0 : b.overrideCount), 0);
         sub.textContent = totalOverrides > 0
             ? `已激活 ${totalBooks} 本世界书 · ${totalEnabled} 条启用中（仅本聊天覆写 ${totalOverrides} 条）`
             : `已激活 ${totalBooks} 本世界书 · ${totalEnabled} 条启用中（条目开关仅对当前聊天生效）`;
@@ -468,7 +470,7 @@ export async function openQuickBookPanel() {
 
             if (kw && !bookMatchesKw && filteredEntries.length === 0) continue;
 
-            const isExpanded = kw ? true : state.expandedBooks.has(book.name);
+            const isExpanded = !book.isUnboundOnly && (kw ? true : state.expandedBooks.has(book.name));
             const sourceTagsHtml = book.sources.map((src) => {
                 const cls = src === '当前聊天绑定'
                     ? 'is-chat-bound'
@@ -477,6 +479,9 @@ export async function openQuickBookPanel() {
                         : '';
                 return `<span class="lk-qb-source ${cls}">${esc(src)}</span>`;
             }).join('');
+            const unboundBadgeHtml = book.isRecentlyUnbound
+                ? `<span class="lk-qb-source is-unbound-tag">${book.isUnboundOnly ? '已解绑' : '已从聊天解绑'}</span>`
+                : '';
 
             const entriesHtml = !book.exists
                 ? `<div class="lk-empty-inline">未在酒馆世界书列表中找到「${esc(book.name)}」（可能已被删除或重命名）</div>`
@@ -529,21 +534,21 @@ export async function openQuickBookPanel() {
                     }).join('');
 
             cardsHtml.push(`
-                <div class="lk-qb-book-card ${isExpanded ? 'is-open' : ''}" data-book="${esc(book.name)}">
-                    <div class="lk-qb-book-head" data-action="toggle-book" data-book="${esc(book.name)}">
+                <div class="lk-qb-book-card ${isExpanded ? 'is-open' : ''} ${book.isUnboundOnly ? 'is-unbound' : ''}" data-book="${esc(book.name)}">
+                    <div class="lk-qb-book-head" ${book.isUnboundOnly ? '' : `data-action="toggle-book" data-book="${esc(book.name)}"`}>
                         <div class="lk-qb-book-left">
-                            <i class="fa-solid ${isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'} lk-qb-chevron"></i>
+                            <i class="fa-solid ${book.isUnboundOnly ? 'fa-link-slash' : isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'} lk-qb-chevron"></i>
                             <div class="lk-qb-book-info">
                                 <div class="lk-qb-book-title-line">
                                     <span class="lk-qb-book-name" title="${esc(book.name)}">${esc(book.name)}</span>
-                                    <span class="lk-qb-book-stat">${book.enabledCount}/${book.entries.length}</span>
-                                    ${book.overrideCount > 0 ? `<span class="lk-mini-tag is-live">仅本聊天 ${book.overrideCount}</span>` : ''}
+                                    ${book.isUnboundOnly ? '' : `<span class="lk-qb-book-stat">${book.enabledCount}/${book.entries.length}</span>`}
+                                    ${!book.isUnboundOnly && book.overrideCount > 0 ? `<span class="lk-mini-tag is-live">仅本聊天 ${book.overrideCount}</span>` : ''}
                                 </div>
-                                <div class="lk-qb-book-sources">${sourceTagsHtml}</div>
+                                <div class="lk-qb-book-sources">${unboundBadgeHtml}${sourceTagsHtml}</div>
                             </div>
                         </div>
                         <div class="lk-qb-book-actions">
-                            ${book.overrideCount > 0 ? `
+                            ${!book.isUnboundOnly && book.overrideCount > 0 ? `
                                 <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-ghost" data-action="reset-book-overrides" data-book="${esc(book.name)}" title="恢复本书所有条目在当前聊天的默认状态">
                                     <i class="fa-solid fa-rotate-left"></i><span>恢复</span>
                                 </button>
@@ -551,6 +556,10 @@ export async function openQuickBookPanel() {
                             ${book.isChatBound ? `
                                 <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-danger-ghost" data-action="unbind-chat-book" data-book="${esc(book.name)}" title="从当前聊天绑定中快速解绑此世界书">
                                     <i class="fa-solid fa-link-slash"></i><span>解绑</span>
+                                </button>
+                            ` : book.isRecentlyUnbound ? `
+                                <button type="button" class="menu_button lk-btn lk-btn-xs lk-btn-accent-soft" data-action="rebind-chat-book" data-book="${esc(book.name)}" title="重新将此世界书绑定到当前聊天">
+                                    <i class="fa-solid fa-link"></i><span>重新绑定</span>
                                 </button>
                             ` : ''}
                         </div>
@@ -574,7 +583,29 @@ export async function openQuickBookPanel() {
     };
 
     const reloadData = async () => {
-        state.books = await loadActiveBooksWithEntries();
+        const activeBooks = await loadActiveBooksWithEntries();
+        const activeByName = new Map(activeBooks.map(b => [b.name, b]));
+        const merged = activeBooks.map(b => ({
+            ...b,
+            isRecentlyUnbound: state.recentlyUnboundBooks.has(b.name) && !b.isChatBound,
+            isUnboundOnly: false,
+        }));
+        for (const unboundName of state.recentlyUnboundBooks) {
+            if (!activeByName.has(unboundName)) {
+                merged.push({
+                    name: unboundName,
+                    sources: [],
+                    isChatBound: false,
+                    isRecentlyUnbound: true,
+                    isUnboundOnly: true,
+                    exists: true,
+                    entries: [],
+                    overrideCount: 0,
+                    enabledCount: 0,
+                });
+            }
+        }
+        state.books = merged;
         state.loading = false;
         renderAll();
     };
@@ -664,15 +695,33 @@ export async function openQuickBookPanel() {
             try {
                 await unbindChatLorebook(chat, bookName);
                 syncActivePresetImmediately({ showToast: false });
+                state.recentlyUnboundBooks.add(bookName);
                 const stillSelected = getSelectedWorldInfo().includes(bookName);
+                if (!stillSelected) state.expandedBooks.delete(bookName);
                 toastr.info(
                     stillSelected
                         ? `已从当前聊天解绑「${bookName}」（因当前预设或全局仍启用该书，暂保持激活）`
-                        : `已从当前聊天解绑并关闭「${bookName}」`,
+                        : `已从当前聊天解绑并关闭「${bookName}」（可点「重新绑定」撤销）`,
                 );
                 await reloadData();
             } catch (err) {
                 toastr.error(err?.message || '解绑当前聊天世界书失败');
+            }
+            return;
+        }
+
+        if (action === 'rebind-chat-book') {
+            const bookName = actionEl.dataset.book;
+            const chat = currentChat();
+            if (!bookName || !chat) return;
+            try {
+                await bindChatLorebook(chat, bookName);
+                syncActivePresetImmediately({ showToast: false });
+                state.recentlyUnboundBooks.delete(bookName);
+                toastr.success(`已重新将「${bookName}」绑定到当前聊天`);
+                await reloadData();
+            } catch (err) {
+                toastr.error(err?.message || '重新绑定世界书失败');
             }
         }
     });
