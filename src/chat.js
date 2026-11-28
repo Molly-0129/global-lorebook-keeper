@@ -16,15 +16,41 @@ export function currentChat() {
     return { ctx, key: JSON.stringify([...owner, ctx.chatId]), name: String(ctx.chatId) };
 }
 
+function normalizeEntryOverrides(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [worldName, map] of Object.entries(raw)) {
+        const cleanWorld = String(worldName || '').trim();
+        if (!cleanWorld || !map || typeof map !== 'object' || Array.isArray(map)) continue;
+        const entries = {};
+        for (const [uid, disabled] of Object.entries(map)) {
+            if (typeof disabled === 'boolean') entries[String(uid)] = disabled;
+        }
+        if (Object.keys(entries).length > 0) out[cleanWorld] = entries;
+    }
+    return out;
+}
+
 export function readChatBinding(chat = currentChat()) {
     const binding = chat?.ctx.chatMetadata[metadataKey];
     if (!binding || typeof binding !== 'object') return {};
+    const entryOverrides = normalizeEntryOverrides(binding.entryOverrides);
+    const hasCore = Boolean(binding.mode || binding.preset || binding.lorebooks?.length || Object.keys(binding.prompts || {}).length);
     return {
-        mode: binding.mode || (binding.preset ? 'preset' : 'manual'),
-        apiId: typeof binding.apiId === 'string' ? binding.apiId : '',
-        preset: typeof binding.preset === 'string' ? binding.preset : '',
-        prompts: Object.fromEntries(Object.entries(binding.prompts || {}).filter(([, value]) => typeof value === 'boolean')),
-        lorebooks: uniqueStrings(binding.lorebooks),
+        ...(hasCore ? {
+            mode: binding.mode || (binding.preset ? 'preset' : 'manual'),
+            apiId: typeof binding.apiId === 'string' ? binding.apiId : '',
+            preset: typeof binding.preset === 'string' ? binding.preset : '',
+            prompts: Object.fromEntries(Object.entries(binding.prompts || {}).filter(([, value]) => typeof value === 'boolean')),
+            lorebooks: uniqueStrings(binding.lorebooks),
+        } : {
+            mode: '',
+            apiId: '',
+            preset: '',
+            prompts: {},
+            lorebooks: [],
+        }),
+        ...(Object.keys(entryOverrides).length ? { entryOverrides } : {}),
     };
 }
 
@@ -35,7 +61,12 @@ export async function saveChatBinding(chat, binding) {
     if (typeof ctx.saveMetadata !== 'function') throw new Error('当前宿主不支持保存聊天元数据。');
     const metadata = ctx.chatMetadata;
     const previous = metadata[metadataKey];
-    const next = binding?.mode === 'manual' || binding?.preset || binding?.lorebooks?.length ? binding : undefined;
+    const entryOverrides = normalizeEntryOverrides(binding?.entryOverrides);
+    const hasEntryOverrides = Object.keys(entryOverrides).length > 0;
+    const cleaned = binding ? { ...binding } : {};
+    if (hasEntryOverrides) cleaned.entryOverrides = entryOverrides;
+    else delete cleaned.entryOverrides;
+    const next = cleaned.mode === 'manual' || cleaned.preset || cleaned.lorebooks?.length || hasEntryOverrides ? cleaned : undefined;
     if (JSON.stringify(previous) === JSON.stringify(next)) return;
     if (next) metadata[metadataKey] = next;
     else delete metadata[metadataKey];
@@ -46,6 +77,75 @@ export async function saveChatBinding(chat, binding) {
         if (previous === undefined) delete metadata[metadataKey];
         else metadata[metadataKey] = previous;
         throw error;
+    }
+}
+
+/**
+ * Sets or clears a per-chat disable override for a single lorebook entry.
+ * `disabledOrNull === null` removes the override and restores the lorebook's default state.
+ */
+export async function saveChatEntryOverride(chat, worldName, uid, disabledOrNull) {
+    const active = chat || currentChat();
+    if (!active) throw new Error('当前未打开有效聊天窗口。');
+    const current = readChatBinding(active);
+    const nextOverrides = normalizeEntryOverrides(current.entryOverrides);
+    const bookKey = String(worldName || '').trim();
+    const uidKey = String(uid);
+    if (!bookKey) return;
+
+    if (disabledOrNull === null || disabledOrNull === undefined) {
+        if (nextOverrides[bookKey]) {
+            delete nextOverrides[bookKey][uidKey];
+            if (!Object.keys(nextOverrides[bookKey]).length) delete nextOverrides[bookKey];
+        }
+    } else {
+        nextOverrides[bookKey] = { ...(nextOverrides[bookKey] || {}), [uidKey]: Boolean(disabledOrNull) };
+    }
+
+    await saveChatBinding(active, { ...current, entryOverrides: nextOverrides });
+}
+
+/**
+ * Clears all per-chat entry overrides for a specific lorebook in the current chat.
+ */
+export async function resetChatBookEntryOverrides(chat, worldName) {
+    const active = chat || currentChat();
+    if (!active) return;
+    const current = readChatBinding(active);
+    const nextOverrides = normalizeEntryOverrides(current.entryOverrides);
+    if (!nextOverrides[worldName]) return;
+    delete nextOverrides[worldName];
+    await saveChatBinding(active, { ...current, entryOverrides: nextOverrides });
+}
+
+/**
+ * Unbinds a single lorebook that was bound to the current chat via Global Lorebook Keeper.
+ */
+export async function unbindChatLorebook(chat, worldName) {
+    const active = chat || currentChat();
+    if (!active) throw new Error('当前未打开有效聊天窗口。');
+    const current = readChatBinding(active);
+    const nextLorebooks = uniqueStrings(current.lorebooks).filter(b => b !== worldName);
+    await saveChatBinding(active, { ...current, lorebooks: nextLorebooks });
+}
+
+/**
+ * Applies per-chat lorebook entry disable overrides inside SillyTavern's WORLDINFO_ENTRIES_LOADED hook.
+ * Only mutates the in-memory scan objects for the current chat without touching global lorebook files.
+ */
+export function applyChatEntryOverrides(payload) {
+    const overrides = readChatBinding().entryOverrides;
+    if (!overrides || !Object.keys(overrides).length) return;
+    for (const list of [payload?.globalLore, payload?.characterLore, payload?.chatLore, payload?.personaLore]) {
+        if (!Array.isArray(list)) continue;
+        for (const entry of list) {
+            const bookMap = entry?.world ? overrides[entry.world] : null;
+            if (!bookMap) continue;
+            const uidKey = String(entry.uid);
+            if (Object.hasOwn(bookMap, uidKey)) {
+                entry.disable = Boolean(bookMap[uidKey]);
+            }
+        }
     }
 }
 

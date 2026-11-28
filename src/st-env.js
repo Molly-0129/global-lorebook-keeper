@@ -6,6 +6,8 @@ let stBindings = {
     getPresetManagerFn: () => null,
     getWorldNamesFn: () => [],
     getSelectedWorldInfoFn: () => [],
+    getWorldInfoFn: () => ({}),
+    loadWorldInfoFn: async () => null,
 };
 
 export function registerStEnv(bindings) {
@@ -35,6 +37,24 @@ export function getWorldNames() {
 export function getSelectedWorldInfo() {
     const selected = stBindings.getSelectedWorldInfoFn?.();
     return Array.isArray(selected) ? selected : [];
+}
+
+export function getWorldInfoSettings() {
+    const wi = stBindings.getWorldInfoFn?.();
+    return wi && typeof wi === 'object' ? wi : {};
+}
+
+export async function loadWorldInfoData(name) {
+    if (!name) return null;
+    if (typeof stBindings.loadWorldInfoFn === 'function') {
+        const res = await stBindings.loadWorldInfoFn(name);
+        if (res) return res;
+    }
+    const ctx = getStContext();
+    if (typeof ctx?.loadWorldInfo === 'function') {
+        return await ctx.loadWorldInfo(name);
+    }
+    return null;
 }
 
 /**

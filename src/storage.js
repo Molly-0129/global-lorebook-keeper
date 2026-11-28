@@ -32,6 +32,7 @@ export const DEFAULT_OPTIONS = {
     autoBindPresetUpdate: false,   // 默认关闭自动绑定，由用户手动开启
     promptOnPresetUpdate: true,    // 默认开启新版预设识别弹窗提醒
     notifyOnSwitch: true,          // 切换预设/角色联动时显示右上角状态提醒
+    quickBookEnabled: true,        // 默认开启输入框上方「快速翻书」快捷按钮
 };
 
 function makeGroupId() {
