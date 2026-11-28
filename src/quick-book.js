@@ -21,6 +21,7 @@ import {
 import { getLorebooksForPreset, loadSettings, uniqueStrings } from './storage.js';
 
 const QUICK_BTN_ID = 'lk-quick-book-btn';
+const QUICK_DOCK_ID = 'lk-quick-book-dock';
 const QUICK_MODAL_ID = 'lk-qb-backdrop';
 
 const POSITION_LABELS = {
@@ -226,29 +227,31 @@ export function refreshQuickBookIndicator() {
 }
 
 /**
- * Mounts or removes the Quick Book button on the top-left row of `#send_form`,
- * right beside any existing third-party top-bar button (e.g. the star icon).
+ * Mounts or removes the Quick Book button.
+ * When `Interstellar-Memory` (`#interstellar-memory-dock`) is present, mounts directly beside
+ * `#interstellar-memory-button` in the same dock row using identical `.menu_button` styling.
  */
 export function syncQuickBookButton() {
     const enabled = loadSettings().options.quickBookEnabled !== false;
-    const existing = document.getElementById(QUICK_BTN_ID);
+    const existingBtn = document.getElementById(QUICK_BTN_ID);
+    const existingDock = document.getElementById(QUICK_DOCK_ID);
 
     if (!enabled) {
-        existing?.remove();
+        existingBtn?.remove();
+        existingDock?.remove();
         activeQuickModal?.close?.();
         return;
     }
 
     const sendForm = document.getElementById('send_form');
-    const nonQr = document.getElementById('nonQRFormItems');
-    if (!sendForm || !nonQr) return;
+    if (!sendForm) return;
 
-    let btn = existing;
+    let btn = existingBtn;
     if (!btn) {
         btn = document.createElement('button');
         btn.id = QUICK_BTN_ID;
         btn.type = 'button';
-        btn.className = 'lk-qb-trigger interactable';
+        btn.className = 'menu_button lk-qb-trigger';
         btn.setAttribute('aria-label', '快速翻书');
         btn.innerHTML = `<i class="fa-solid fa-book-open"></i><span class="lk-qb-btn-dot" aria-hidden="true"></span>`;
         btn.addEventListener('click', (e) => {
@@ -262,22 +265,31 @@ export function syncQuickBookButton() {
         });
     }
 
-    const ignoreIds = new Set(['file_form', 'nonQRFormItems', 'qr--bar', QUICK_BTN_ID]);
-    const topLeftSiblings = Array.from(sendForm.children).filter((el) => {
-        if (ignoreIds.has(el.id)) return false;
-        const style = window.getComputedStyle(el);
-        if (style.display === 'none') return false;
-        const orderNum = Number(style.order) || 0;
-        return orderNum <= 0;
-    });
+    const imDock = document.getElementById('interstellar-memory-dock');
+    const imBtn = document.getElementById('interstellar-memory-button');
 
-    if (topLeftSiblings.length > 0) {
-        const anchor = topLeftSiblings[topLeftSiblings.length - 1];
-        if (anchor.nextElementSibling !== btn) {
-            anchor.insertAdjacentElement('afterend', btn);
+    if (imDock) {
+        // Sit right beside Interstellar-Memory's star button in the exact same dock row
+        if (imBtn && imBtn.parentElement === imDock) {
+            if (imBtn.nextElementSibling !== btn) {
+                imBtn.insertAdjacentElement('afterend', btn);
+            }
+        } else if (btn.parentElement !== imDock) {
+            imDock.appendChild(btn);
         }
-    } else if (btn.parentElement !== sendForm || btn.nextElementSibling !== nonQr) {
-        sendForm.insertBefore(btn, nonQr);
+        existingDock?.remove();
+    } else {
+        // Standalone fallback dock matching Interstellar-Memory's 28px top bar geometry
+        let dock = existingDock;
+        if (!dock) {
+            dock = document.createElement('div');
+            dock.id = QUICK_DOCK_ID;
+            dock.className = 'lk-qb-dock';
+            sendForm.prepend(dock);
+        }
+        if (btn.parentElement !== dock) {
+            dock.appendChild(btn);
+        }
     }
 
     refreshQuickBookIndicator();

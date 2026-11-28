@@ -1597,44 +1597,56 @@ body.no-blur .lk-sub-card {
    Quick Book Viewer (快速翻书) — Input-bar Button & Compact Drawer Panel
    ========================================================================== */
 
-#lk-quick-book-btn.lk-qb-trigger {
-    position: relative;
-    order: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    margin: 5px 0 3px 6px;
-    padding: 0;
-    border-radius: 8px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    background-color: var(--black30a, color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent));
-    color: var(--SmartThemeBodyColor);
-    font-size: 0.92em;
-    cursor: pointer;
-    flex-shrink: 0;
-    opacity: 0.85;
-    transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+/* Standalone dock matching Interstellar-Memory's `#interstellar-memory-dock` geometry */
+#lk-quick-book-dock.lk-qb-dock {
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    flex: 0 0 28px !important;
+    width: 100% !important;
+    height: 28px !important;
+    margin: 0 !important;
+    padding: 0 4px !important;
+    box-sizing: border-box !important;
 }
 
-#lk-quick-book-btn.lk-qb-trigger:hover {
-    opacity: 1;
-    border-color: var(--SmartThemeQuoteColor);
-    color: var(--SmartThemeQuoteColor);
-    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor) 14%, var(--SmartThemeBlurTintColor));
+/* Aligned 1:1 with `#interstellar-memory-button` (native `.menu_button`, 22x22 compact square) */
+#lk-quick-book-btn.lk-qb-trigger {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: relative !important;
+    flex: 0 0 22px !important;
+    box-sizing: border-box !important;
+    width: 22px !important;
+    min-width: 22px !important;
+    max-width: 22px !important;
+    height: 22px !important;
+    min-height: 22px !important;
+    max-height: 22px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 12px !important;
+    line-height: 1 !important;
+    transform: none !important;
+    writing-mode: horizontal-tb !important;
+    cursor: pointer;
+}
+
+#interstellar-memory-dock > #lk-quick-book-btn.lk-qb-trigger {
+    margin-left: 6px !important;
 }
 
 #lk-quick-book-btn .lk-qb-btn-dot {
     display: none;
     position: absolute;
-    top: 3px;
-    right: 3px;
-    width: 6px;
-    height: 6px;
+    top: 2px;
+    right: 2px;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
     background-color: var(--SmartThemeQuoteColor);
-    box-shadow: 0 0 0 1.5px var(--SmartThemeBlurTintColor);
+    box-shadow: 0 0 0 1px var(--SmartThemeBlurTintColor);
 }
 
 #lk-quick-book-btn.has-overrides .lk-qb-btn-dot {
