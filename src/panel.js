@@ -13,6 +13,7 @@ import {
     shieldDialogEvents,
 } from './dialog.js';
 import { currentChat, listPresetPrompts, readChatBinding, resolvePreset, saveChatBinding } from './chat.js';
+import { syncQuickBookButton } from './quick-book.js';
 import { scanAllUnboundPresetUpdates } from './matcher.js';
 import {
     getActivePresetManager,
@@ -259,7 +260,9 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
         }
         savingChat = true;
         try {
-            await saveChatBinding(chat, binding);
+            const existingOverrides = readChatBinding(chat).entryOverrides;
+            const payload = existingOverrides ? { ...binding, entryOverrides: existingOverrides } : binding;
+            await saveChatBinding(chat, payload);
             const saved = Boolean(readChatBinding(chat).mode);
             loadChatDraft();
             await applyCurrentChatBinding();
@@ -980,6 +983,17 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
                 </div>
 
                 <div class="lk-settings-card">
+                    <div class="lk-settings-group-title">快捷功能</div>
+                    <label class="checkbox_label lk-switch-row">
+                        <div class="lk-switch-text">
+                            <div class="lk-switch-title">输入框上方「快速翻书」按钮</div>
+                            <div class="lk-switch-desc">在聊天输入框左上角显示图书快捷按钮，快速查看当前聊天激活的世界书、按当前聊天独立开关条目，或一键解绑当前聊天的世界书绑定。</div>
+                        </div>
+                        <input type="checkbox" class="lk-opt-checkbox" data-opt="quickBookEnabled" ${opts.quickBookEnabled !== false ? 'checked' : ''} />
+                    </label>
+                </div>
+
+                <div class="lk-settings-card">
                     <div class="lk-settings-group-title">通知与反馈</div>
                     <label class="checkbox_label lk-switch-row">
                         <div class="lk-switch-text">
@@ -1567,6 +1581,7 @@ export function showSettingsPanel(initialTab = 'preset-lorebook') {
             const s = loadSettings();
             s.options[optKey] = Boolean(t.checked);
             saveSettings(s);
+            if (optKey === 'quickBookEnabled') syncQuickBookButton();
             syncExtensionDrawerSummary();
             renderAll();
         }
