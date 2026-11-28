@@ -23,6 +23,17 @@ import { getLorebooksForPreset, loadSettings, uniqueStrings } from './storage.js
 const QUICK_BTN_ID = 'lk-quick-book-btn';
 const QUICK_MODAL_ID = 'lk-qb-backdrop';
 
+const POSITION_LABELS = {
+    0: '角色定义前',
+    1: '角色定义后',
+    2: '作者注释前',
+    3: '作者注释后',
+    4: '聊天深度',
+    5: '示例消息前',
+    6: '示例消息后',
+    7: 'Outlet',
+};
+
 let activeQuickModal = null;
 let openMainPanelHandler = null;
 
@@ -32,6 +43,15 @@ export function setQuickBookMainPanelHandler(fn) {
 
 function getAvatarStem(avatar) {
     return String(avatar || '').replace(/\.[^/.]+$/, '');
+}
+
+function formatPositionLabel(entry) {
+    const pos = Number(entry.position);
+    if (pos === 4) {
+        const depth = Number.isFinite(Number(entry.depth)) ? Number(entry.depth) : 4;
+        return `@D ${depth}`;
+    }
+    return POSITION_LABELS[pos] || `位置 ${Number.isFinite(pos) ? pos : 0}`;
 }
 
 /**
@@ -70,7 +90,7 @@ export function collectActiveChatBookSources() {
         if (isChatBound) item.isChatBound = true;
     };
 
-    // 1. Plugin chat-bound lorebooks (highest visibility & supports fast unbind)
+    // 1. Plugin chat-bound lorebooks (supports fast unbind)
     for (const book of chatBoundSet) {
         addBook(book, '当前聊天绑定', { isChatBound: true });
     }
@@ -119,7 +139,7 @@ export function collectActiveChatBookSources() {
 }
 
 /**
- * Loads normalized entries for all active lorebooks in the current chat.
+ * Loads normalized entries (with read-only detail fields) for all active lorebooks in the current chat.
  */
 async function loadActiveBooksWithEntries() {
     const sources = collectActiveChatBookSources();
@@ -143,20 +163,27 @@ async function loadActiveBooksWithEntries() {
             .filter(e => e && e.uid !== undefined && e.uid !== null)
             .map((e) => {
                 const uid = String(e.uid);
-                const keys = Array.isArray(e.key) ? e.key.filter(Boolean) : [];
+                const keys = Array.isArray(e.key) ? e.key.map(k => String(k || '').trim()).filter(Boolean) : [];
+                const secondaryKeys = Array.isArray(e.keysecondary) ? e.keysecondary.map(k => String(k || '').trim()).filter(Boolean) : [];
                 const comment = String(e.comment || '').trim();
+                const content = String(e.content || '');
                 const title = comment || (keys.length ? keys.join(', ') : `未命名条目 #${uid}`);
                 const defaultDisabled = Boolean(e.disable);
                 const hasOverride = Object.hasOwn(bookOverrides, uid);
                 const effectiveDisabled = hasOverride ? Boolean(bookOverrides[uid]) : defaultDisabled;
                 const triggerType = e.constant ? 'constant' : (e.vectorized ? 'vector' : 'keyword');
+                const probability = e.useProbability && Number.isFinite(Number(e.probability)) ? Number(e.probability) : 100;
                 return {
                     uid,
                     title,
                     keys,
+                    secondaryKeys,
                     comment,
+                    content,
                     triggerType,
+                    positionLabel: formatPositionLabel(e),
                     order: Number(e.order) || 0,
+                    probability,
                     displayIndex: Number.isFinite(Number(e.displayIndex)) ? Number(e.displayIndex) : Number.MAX_SAFE_INTEGER,
                     defaultDisabled,
                     effectiveDisabled,
@@ -194,7 +221,7 @@ export function refreshQuickBookIndicator() {
     }
     btn.classList.toggle('has-overrides', overrideTotal > 0);
     btn.title = overrideTotal > 0
-        ? `快速翻书（本聊天已独立覆写 ${overrideTotal} 个条目）`
+        ? `快速翻书（仅本聊天已覆写 ${overrideTotal} 个条目）`
         : '快速翻书：查看当前聊天激活的世界书与条目';
 }
 
@@ -235,8 +262,6 @@ export function syncQuickBookButton() {
         });
     }
 
-    // Place immediately after any existing compact top-left sibling button (e.g., third-party star button)
-    // so they sit neatly side-by-side on the same flex row above `#nonQRFormItems`.
     const ignoreIds = new Set(['file_form', 'nonQRFormItems', 'qr--bar', QUICK_BTN_ID]);
     const topLeftSiblings = Array.from(sendForm.children).filter((el) => {
         if (ignoreIds.has(el.id)) return false;
@@ -258,6 +283,10 @@ export function syncQuickBookButton() {
     refreshQuickBookIndicator();
 }
 
+function makeEntryKey(bookName, uid) {
+    return `${bookName}\u0000${uid}`;
+}
+
 /**
  * Opens the Quick Book Viewer floating panel.
  */
@@ -271,9 +300,8 @@ export async function openQuickBookPanel() {
         books: [],
         loading: true,
         search: '',
-        filter: 'all', // 'all' | 'enabled' | 'overridden'
-        expandedBooks: new Set(),
-        initializedExpand: false,
+        expandedBooks: new Set(),   // All books collapsed by default
+        expandedEntries: new Set(), // Read-only entry detail drawers
     };
 
     const backdrop = document.createElement('div');
@@ -304,7 +332,6 @@ export async function openQuickBookPanel() {
                     <i class="fa-solid fa-magnifying-glass"></i>
                     <input type="search" id="lk-qb-search" class="text_pole lk-search-input" placeholder="搜索世界书、条目名称或关键词..." />
                 </div>
-                <div class="lk-qb-filters" id="lk-qb-filters"></div>
             </div>
 
             <div class="lk-body lk-qb-body" id="lk-qb-body"></div>
@@ -334,22 +361,6 @@ export async function openQuickBookPanel() {
         }
     };
 
-    const renderFilters = () => {
-        const el = backdrop.querySelector('#lk-qb-filters');
-        if (!el) return;
-        const totalOverrides = state.books.reduce((sum, b) => sum + b.overrideCount, 0);
-        const pills = [
-            { key: 'all', label: '全部条目' },
-            { key: 'enabled', label: '仅启用中' },
-            { key: 'overridden', label: `本聊天已改${totalOverrides ? ` (${totalOverrides})` : ''}` },
-        ];
-        el.innerHTML = pills.map(p => `
-            <button type="button" class="lk-qb-pill ${state.filter === p.key ? 'is-active' : ''}" data-action="set-filter" data-filter="${p.key}">
-                ${esc(p.label)}
-            </button>
-        `).join('');
-    };
-
     const renderSubtitle = () => {
         const sub = backdrop.querySelector('#lk-qb-subtitle');
         if (!sub) return;
@@ -362,8 +373,40 @@ export async function openQuickBookPanel() {
         const totalEnabled = state.books.reduce((sum, b) => sum + b.enabledCount, 0);
         const totalOverrides = state.books.reduce((sum, b) => sum + b.overrideCount, 0);
         sub.textContent = totalOverrides > 0
-            ? `当前聊天已激活 ${totalBooks} 本世界书 · ${totalEnabled} 条启用中（本聊天覆写 ${totalOverrides} 条）`
-            : `当前聊天已激活 ${totalBooks} 本世界书 · ${totalEnabled} 条启用中（条目开关仅对当前聊天生效）`;
+            ? `已激活 ${totalBooks} 本世界书 · ${totalEnabled} 条启用中（仅本聊天覆写 ${totalOverrides} 条）`
+            : `已激活 ${totalBooks} 本世界书 · ${totalEnabled} 条启用中（条目开关仅对当前聊天生效）`;
+    };
+
+    const renderEntryDetailHtml = (entry) => {
+        const triggerLabel = entry.triggerType === 'constant'
+            ? '蓝灯常驻'
+            : entry.triggerType === 'vector'
+                ? '向量触发'
+                : '绿灯关键词';
+
+        const metaPills = [
+            `<span class="lk-qb-meta-pill">${triggerLabel}</span>`,
+            `<span class="lk-qb-meta-pill">${esc(entry.positionLabel)}</span>`,
+            `<span class="lk-qb-meta-pill">顺序 ${entry.order}</span>`,
+            ...(entry.probability < 100 ? [`<span class="lk-qb-meta-pill">概率 ${entry.probability}%</span>`] : []),
+            ...(entry.hasOverride ? [`<span class="lk-qb-meta-pill is-origin">原书默认：${entry.defaultDisabled ? '关闭' : '开启'}</span>`] : []),
+        ].join('');
+
+        const keysBlock = (entry.keys.length > 0 || entry.secondaryKeys.length > 0) ? `
+            <div class="lk-qb-detail-keys">
+                ${entry.keys.length > 0 ? `<div class="lk-qb-detail-key-line"><span>主词</span><p>${esc(entry.keys.join('、'))}</p></div>` : ''}
+                ${entry.secondaryKeys.length > 0 ? `<div class="lk-qb-detail-key-line"><span>次词</span><p>${esc(entry.secondaryKeys.join('、'))}</p></div>` : ''}
+            </div>
+        ` : '';
+
+        const contentText = entry.content.trim();
+        return `
+            <div class="lk-qb-entry-detail">
+                <div class="lk-qb-detail-meta">${metaPills}</div>
+                ${keysBlock}
+                <div class="lk-qb-detail-content ${contentText ? '' : 'is-empty'}">${contentText ? esc(contentText) : '（该条目正文为空）'}</div>
+            </div>
+        `;
     };
 
     const renderBooksList = () => {
@@ -405,16 +448,13 @@ export async function openQuickBookPanel() {
         for (const book of state.books) {
             const bookMatchesKw = !kw || book.name.toLowerCase().includes(kw);
             const filteredEntries = book.entries.filter((e) => {
-                if (state.filter === 'enabled' && e.effectiveDisabled) return false;
-                if (state.filter === 'overridden' && !e.hasOverride) return false;
-                if (!kw) return true;
-                if (bookMatchesKw) return true;
+                if (!kw || bookMatchesKw) return true;
                 return e.title.toLowerCase().includes(kw)
-                    || e.keys.some(k => k.toLowerCase().includes(kw));
+                    || e.keys.some(k => k.toLowerCase().includes(kw))
+                    || e.secondaryKeys.some(k => k.toLowerCase().includes(kw));
             });
 
             if (kw && !bookMatchesKw && filteredEntries.length === 0) continue;
-            if (state.filter === 'overridden' && filteredEntries.length === 0) continue;
 
             const isExpanded = kw ? true : state.expandedBooks.has(book.name);
             const sourceTagsHtml = book.sources.map((src) => {
@@ -429,8 +469,11 @@ export async function openQuickBookPanel() {
             const entriesHtml = !book.exists
                 ? `<div class="lk-empty-inline">未在酒馆世界书列表中找到「${esc(book.name)}」（可能已被删除或重命名）</div>`
                 : filteredEntries.length === 0
-                    ? `<div class="lk-empty-inline">${book.entries.length === 0 ? '该世界书暂无条目' : '当前筛选条件下没有匹配的条目'}</div>`
+                    ? `<div class="lk-empty-inline">${book.entries.length === 0 ? '该世界书暂无条目' : '没有匹配的条目'}</div>`
                     : filteredEntries.map((entry) => {
+                        const isEnabled = !entry.effectiveDisabled;
+                        const entryKey = makeEntryKey(book.name, entry.uid);
+                        const isDetailOpen = state.expandedEntries.has(entryKey);
                         const dotCls = entry.triggerType === 'constant'
                             ? 'is-constant'
                             : entry.triggerType === 'vector'
@@ -446,21 +489,30 @@ export async function openQuickBookPanel() {
                             : '';
 
                         return `
-                            <label class="checkbox_label lk-qb-entry-row ${entry.effectiveDisabled ? 'is-disabled' : ''} ${entry.hasOverride ? 'is-overridden' : ''}">
-                                <div class="lk-qb-entry-main">
-                                    <span class="lk-qb-lamp ${dotCls}" title="${esc(dotTitle)}"></span>
-                                    <div class="lk-qb-entry-text">
-                                        <span class="lk-qb-entry-title" title="${esc(entry.title)}">${esc(entry.title)}</span>
-                                        ${keysPreview}
+                            <div class="lk-qb-entry-item ${entry.effectiveDisabled ? 'is-disabled' : ''} ${entry.hasOverride ? 'is-overridden' : ''} ${isDetailOpen ? 'is-detail-open' : ''}">
+                                <div class="lk-qb-entry-row" data-action="toggle-entry-detail" data-book="${esc(book.name)}" data-uid="${esc(entry.uid)}" role="button" tabindex="0" aria-expanded="${isDetailOpen}">
+                                    <div class="lk-qb-entry-main">
+                                        <span class="lk-qb-lamp ${dotCls}" title="${esc(dotTitle)}"></span>
+                                        <div class="lk-qb-entry-text">
+                                            <span class="lk-qb-entry-title" title="${esc(entry.title)}">${esc(entry.title)}</span>
+                                            ${keysPreview}
+                                        </div>
+                                        ${entry.hasOverride ? '<span class="lk-mini-tag is-live" title="该条目状态仅在当前聊天窗口生效，不影响原世界书">仅本聊天</span>' : ''}
                                     </div>
-                                    ${entry.hasOverride ? '<span class="lk-mini-tag is-live" title="该条目状态仅在当前聊天窗口生效，不影响原世界书">本聊天已改</span>' : ''}
+                                    <button type="button"
+                                        class="lk-qb-entry-toggle"
+                                        role="switch"
+                                        aria-checked="${isEnabled}"
+                                        aria-label="${esc(entry.title)}"
+                                        data-action="toggle-entry"
+                                        data-book="${esc(book.name)}"
+                                        data-uid="${esc(entry.uid)}"
+                                        title="${isEnabled ? '点击在当前聊天关闭此条目' : '点击在当前聊天启用此条目'}">
+                                        <i class="fa-solid ${isEnabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+                                    </button>
                                 </div>
-                                <input type="checkbox"
-                                    class="lk-qb-entry-toggle"
-                                    data-book="${esc(book.name)}"
-                                    data-uid="${esc(entry.uid)}"
-                                    ${!entry.effectiveDisabled ? 'checked' : ''} />
-                            </label>
+                                ${isDetailOpen ? renderEntryDetailHtml(entry) : ''}
+                            </div>
                         `;
                     }).join('');
 
@@ -473,7 +525,7 @@ export async function openQuickBookPanel() {
                                 <div class="lk-qb-book-title-line">
                                     <span class="lk-qb-book-name" title="${esc(book.name)}">${esc(book.name)}</span>
                                     <span class="lk-qb-book-stat">${book.enabledCount}/${book.entries.length}</span>
-                                    ${book.overrideCount > 0 ? `<span class="lk-mini-tag is-live">已改 ${book.overrideCount}</span>` : ''}
+                                    ${book.overrideCount > 0 ? `<span class="lk-mini-tag is-live">仅本聊天 ${book.overrideCount}</span>` : ''}
                                 </div>
                                 <div class="lk-qb-book-sources">${sourceTagsHtml}</div>
                             </div>
@@ -498,14 +550,13 @@ export async function openQuickBookPanel() {
 
         body.innerHTML = cardsHtml.length > 0
             ? `<div class="lk-qb-book-list">${cardsHtml.join('')}</div>`
-            : `<div class="lk-empty-inline">没有符合当前筛选条件的世界书或条目</div>`;
+            : `<div class="lk-empty-inline">没有匹配「${esc(state.search)}」的世界书或条目</div>`;
 
         body.scrollTop = prevScroll;
     };
 
     const renderAll = () => {
         renderSubtitle();
-        renderFilters();
         renderBooksList();
         refreshQuickBookIndicator();
     };
@@ -513,15 +564,6 @@ export async function openQuickBookPanel() {
     const reloadData = async () => {
         state.books = await loadActiveBooksWithEntries();
         state.loading = false;
-        if (!state.initializedExpand) {
-            state.initializedExpand = true;
-            // Auto-expand first book (or all if <= 2 books) for immediate ergonomics
-            if (state.books.length <= 2) {
-                state.books.forEach(b => state.expandedBooks.add(b.name));
-            } else if (state.books[0]) {
-                state.expandedBooks.add(state.books[0].name);
-            }
-        }
         renderAll();
     };
 
@@ -543,18 +585,49 @@ export async function openQuickBookPanel() {
             return;
         }
 
-        if (action === 'set-filter') {
-            state.filter = actionEl.dataset.filter || 'all';
-            renderAll();
-            return;
-        }
-
         if (action === 'toggle-book') {
             const bookName = actionEl.dataset.book;
             if (!bookName) return;
             if (state.expandedBooks.has(bookName)) state.expandedBooks.delete(bookName);
             else state.expandedBooks.add(bookName);
             renderBooksList();
+            return;
+        }
+
+        if (action === 'toggle-entry-detail') {
+            const bookName = actionEl.dataset.book;
+            const uid = actionEl.dataset.uid;
+            if (!bookName || !uid) return;
+            const key = makeEntryKey(bookName, uid);
+            if (state.expandedEntries.has(key)) state.expandedEntries.delete(key);
+            else state.expandedEntries.add(key);
+            renderBooksList();
+            return;
+        }
+
+        if (action === 'toggle-entry') {
+            const bookName = actionEl.dataset.book;
+            const uid = actionEl.dataset.uid;
+            const chat = currentChat();
+            if (!bookName || !uid || !chat) return;
+
+            const book = state.books.find(b => b.name === bookName);
+            const entry = book?.entries.find(en => en.uid === uid);
+            if (!entry) return;
+
+            const nextDisabled = !entry.effectiveDisabled;
+            const overrideVal = nextDisabled === entry.defaultDisabled ? null : nextDisabled;
+
+            try {
+                await saveChatEntryOverride(chat, bookName, uid, overrideVal);
+                entry.effectiveDisabled = nextDisabled;
+                entry.hasOverride = overrideVal !== null;
+                book.overrideCount = book.entries.filter(en => en.hasOverride).length;
+                book.enabledCount = book.entries.filter(en => !en.effectiveDisabled).length;
+                renderAll();
+            } catch (err) {
+                toastr.error(err?.message || '保存单聊条目状态失败');
+            }
             return;
         }
 
@@ -592,32 +665,12 @@ export async function openQuickBookPanel() {
         }
     });
 
-    backdrop.addEventListener('change', async (e) => {
-        const t = e.target;
-        if (!t.classList.contains('lk-qb-entry-toggle')) return;
-        const bookName = t.dataset.book;
-        const uid = t.dataset.uid;
-        const chat = currentChat();
-        if (!bookName || !uid || !chat) return;
-
-        const book = state.books.find(b => b.name === bookName);
-        const entry = book?.entries.find(en => en.uid === uid);
-        if (!entry) return;
-
-        const nextDisabled = !t.checked;
-        const overrideVal = nextDisabled === entry.defaultDisabled ? null : nextDisabled;
-
-        try {
-            await saveChatEntryOverride(chat, bookName, uid, overrideVal);
-            entry.effectiveDisabled = nextDisabled;
-            entry.hasOverride = overrideVal !== null;
-            book.overrideCount = book.entries.filter(en => en.hasOverride).length;
-            book.enabledCount = book.entries.filter(en => !en.effectiveDisabled).length;
-            renderAll();
-        } catch (err) {
-            t.checked = !entry.effectiveDisabled;
-            toastr.error(err?.message || '保存单聊条目状态失败');
-        }
+    backdrop.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const row = e.target.closest('.lk-qb-entry-row[data-action="toggle-entry-detail"]');
+        if (!row || e.target.closest('[data-action="toggle-entry"]')) return;
+        e.preventDefault();
+        row.click();
     });
 
     backdrop.addEventListener('input', (e) => {
